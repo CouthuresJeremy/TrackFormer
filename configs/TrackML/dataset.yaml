@@ -7,5 +7,11 @@ data:
     dataset_type: tml
     dataset_dir: Data/Tml/train_1
     batch_size: 1024
-    use_wrapper: False
+    use_wrapper: True
     persistance: True
+    kwargs:
+      min_hits: 3
+      min_pt: 0.5
+      max_pt: 10
+      keep_secondaries: False
+      max_abs_eta: 1

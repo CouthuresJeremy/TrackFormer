@@ -132,9 +132,13 @@ class IterBase(IterableDataset, ABC):
         folder (Path): directory containing dataset.
     """
 
-    def __init__(self, dataset_dir, folder="train", dataset=None):
+    def __init__(self, dataset_dir, folder="train", dataset=None, **kwargs):
         self.path = Path(dataset_dir) / folder
         self.available_events = self._event_range()
+
+        # Add kwargs to the class
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
     def _event_range(self):
 
@@ -198,13 +202,42 @@ class TrackMLDataset(IterBase):
         )
 
     def _preprocessor(self, eventfiles):
+        # Get kwargs min_hits if available
+        min_hits = getattr(self, "min_hits", 5)
 
         hits, _, particles, truth = eventfiles
-        particles = particles[particles["nhits"] >= 5]
+        particles = particles[particles["nhits"] >= min_hits]
+
         merged_df = pd.merge(truth, particles, on="particle_id")
         merged_df = pd.merge(merged_df, hits, on="hit_id")
 
         merged_df["pT"] = np.sqrt(merged_df["px"] ** 2 + merged_df["py"] ** 2)
+
+        # Get kwargs min_pt and max_pt if available
+        min_pt = getattr(self, "min_pt", 0)
+        max_pt = getattr(self, "max_pt", np.inf)
+
+        merged_df = merged_df[(merged_df["pT"] >= min_pt) & (merged_df["pT"] <= max_pt)]
+
+        # Get kwargs keep_secondaries if available
+        keep_secondaries = getattr(self, "keep_secondaries", True)
+        if not keep_secondaries:
+            secondary_selection = (np.abs(merged_df["vx"]) >= 1) | (
+                np.abs(merged_df["vy"]) >= 1
+            )
+            merged_df = merged_df[~secondary_selection]
+
+        p = np.sqrt(merged_df["px"] ** 2 + merged_df["py"] ** 2 + merged_df["pz"] ** 2)
+        merged_df["peta"] = np.arctanh(merged_df["pz"] / p)
+
+        # Get kwargs min_abs_eta and max_abs_eta if available
+        min_abs_eta = getattr(self, "min_abs_eta", 0)
+        max_abs_eta = getattr(self, "max_abs_eta", np.inf)
+
+        merged_df = merged_df[
+            (np.abs(merged_df["peta"]) >= min_abs_eta)
+            & (np.abs(merged_df["peta"]) <= max_abs_eta)
+        ]
 
         grouped = merged_df.groupby("particle_id")
 
@@ -264,7 +297,7 @@ class DatasetWrapper(Dataset):
         folder (str): (train, test, val) to load.
     """
 
-    def __init__(self, dataset_dir, folder, dataset="tml"):
+    def __init__(self, dataset_dir, folder, dataset="tml", **kwargs):
         self.dataset_dir = Path(dataset_dir)
         self.dataset_type = dataset.lower()
         self.folder = folder
@@ -280,6 +313,9 @@ class DatasetWrapper(Dataset):
                 f"Invalid dataset type '{dataset}'. Expected 'tml' or 'acts'."
             )
 
+        # Add kwargs to the class
+        self.ds_class_kwargs = kwargs
+
         self.__setup()
 
     def __setup(self):
@@ -292,7 +328,7 @@ class DatasetWrapper(Dataset):
                 "Preprocessed data not found. Processing and saving data...",
                 style="cyan",
             )
-            ds = self.ds_class(self.dataset_dir, self.folder)
+            ds = self.ds_class(self.dataset_dir, self.folder, **self.ds_class_kwargs)
             ds_loader = DataLoader(ds, num_workers=int(os.cpu_count()))
             self.datalist = [
                 [x.squeeze(), y.squeeze(), z.squeeze()] for x, y, z in ds_loader
@@ -324,6 +360,7 @@ class DataModule(L.LightningDataModule):
         use_wrapper=True,
         persistance=False,
         pin_memory=False,
+        kwargs={},  # kwargs for the dataset class
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["_class_path"])
@@ -336,6 +373,8 @@ class DataModule(L.LightningDataModule):
             raise ValueError(
                 f"Invalid dataset_type '{dataset}'. Expected 'tml' or 'acts'."
             )
+        # Add kwargs to the class
+        self.dataset_class_kwargs = kwargs
 
     def setup(self, stage=None):
         """Setup datasets for training, validation, and testing."""
@@ -375,6 +414,7 @@ class DataModule(L.LightningDataModule):
             dataset_dir=self.hparams.dataset_dir,
             folder=folder,
             dataset=self.hparams.dataset_type,
+            **self.dataset_class_kwargs,
         )
 
     @staticmethod
