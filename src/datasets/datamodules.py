@@ -241,8 +241,11 @@ class TrackMLDataset(IterBase):
 
         grouped = merged_df.groupby("particle_id")
 
+        # Get kwargs input_variables if available
+        input_variables = getattr(self, "input_variables", ["tx", "ty", "tz"])
+
         for _, group in grouped:
-            inputs = group[["tx", "ty", "tz"]].values
+            inputs = group[input_variables].values
             target = group[["pT", "pz"]].values[0]
 
             zxy = torch.tensor(inputs, dtype=torch.float32)

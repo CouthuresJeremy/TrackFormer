@@ -7,7 +7,7 @@ data:
     dataset_type: tml
     dataset_dir: Data/Tml/train_1
     batch_size: 1024
-    use_wrapper: True
+    use_wrapper: False
     persistance: True
     kwargs:
       min_hits: 3
@@ -15,3 +15,7 @@ data:
       max_pt: 10
       keep_secondaries: False
       max_abs_eta: 1
+      input_variables:
+        - tx
+        - ty
+        - tz
