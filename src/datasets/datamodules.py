@@ -239,10 +239,15 @@ class TrackMLDataset(IterBase):
             & (np.abs(merged_df["peta"]) <= max_abs_eta)
         ]
 
-        grouped = merged_df.groupby("particle_id")
-
         # Get kwargs input_variables if available
         input_variables = getattr(self, "input_variables", ["tx", "ty", "tz"])
+
+        if any([var not in merged_df.columns for var in input_variables]):
+            # Add other coordinates system
+            merged_df["tr"] = np.sqrt(merged_df["tx"] ** 2 + merged_df["ty"] ** 2)
+            merged_df["tphi"] = np.arctan2(merged_df["ty"], merged_df["tx"])
+
+        grouped = merged_df.groupby("particle_id")
 
         for _, group in grouped:
             inputs = group[input_variables].values

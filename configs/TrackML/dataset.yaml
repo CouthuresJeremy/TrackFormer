@@ -16,6 +16,6 @@ data:
       keep_secondaries: False
       max_abs_eta: 1
       input_variables:
-        - tx
-        - ty
+        - tr
+        - tphi
         - tz
