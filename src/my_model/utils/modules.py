@@ -36,6 +36,11 @@ def scaled_dot_product(q, k, v, mask=None):
     attn_weight += attn_bias
 
     attention = torch.softmax(attn_weight, dim=-1)
+
+    if mask is not None:
+        attention = attention.permute(0, 1, 3, 2).masked_fill(mask == 0, 0)
+        attention = attention.permute(0, 1, 3, 2)
+
     values = attention @ v
     return values, attention
 
