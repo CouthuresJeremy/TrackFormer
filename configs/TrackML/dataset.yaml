@@ -19,3 +19,6 @@ data:
         - tr
         - tphi
         - tz
+      output_variables:
+        - pT
+        - pz

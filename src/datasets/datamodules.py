@@ -247,11 +247,18 @@ class TrackMLDataset(IterBase):
             merged_df["tr"] = np.sqrt(merged_df["tx"] ** 2 + merged_df["ty"] ** 2)
             merged_df["tphi"] = np.arctan2(merged_df["ty"], merged_df["tx"])
 
+        # Get kwargs output_variables if available
+        output_variables = getattr(self, "output_variables", ["pT", "pz"])
+
+        if any([var not in merged_df.columns for var in output_variables]):
+            # Add other track parameters
+            merged_df["qopT"] = merged_df["q"] / merged_df["pT"]
+
         grouped = merged_df.groupby("particle_id")
 
         for _, group in grouped:
             inputs = group[input_variables].values
-            target = group[["pT", "pz"]].values[0]
+            target = group[output_variables].values[0]
 
             zxy = torch.tensor(inputs, dtype=torch.float32)
             target_tensor = torch.tensor(target, dtype=torch.float32)
