@@ -19,8 +19,21 @@ def scaled_dot_product(q, k, v, mask=None):
         mask : batch firts mask
     """
 
+    L, S = q.size(-2), k.size(-2)
+    B, num_heads = q.size(0), q.size(1)
+
+    # [Batch, NumHeads, SeqLen, SeqLen]
+    attn_bias = torch.zeros(B, num_heads, L, S, dtype=q.dtype, device=q.device)
+
     scale_factor = 1 / math.sqrt(q.size(-1))
+
+    # Make sure that the mask is broadcastable
+    if mask is not None:
+        mask = mask.unsqueeze(1).unsqueeze(1)  # [Batch, 1, 1, SeqLen]
+        attn_bias.masked_fill_(mask.logical_not(), float("-inf"))
+
     attn_weight = q @ k.transpose(-2, -1) * scale_factor
+    attn_weight += attn_bias
 
     attention = torch.softmax(attn_weight, dim=-1)
     values = attention @ v
@@ -234,9 +247,9 @@ class BaseModel(L.LightningModule):
 
     def _calculate_loss(self, batch, mode="train"):
 
-        inputs, _, label = batch
+        inputs, mask, label = batch
 
-        preds = self(inputs)
+        preds = self(inputs, mask=mask)
         loss = self.criterion(preds.squeeze(), label.squeeze())
         self.log(
             f"{mode}_loss",

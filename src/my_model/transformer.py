@@ -63,14 +63,14 @@ class TrackFormer(BaseModel):
             nn.Linear(64, self.hparams.num_classes),
         )
 
-    def forward(self, x):
+    def forward(self, x, mask=None):
         """
         Inputs:
             x - Input features [Batch, SeqLen, input_dim]
             mask - Mask to apply on the attention outputs
         """
         x = self.embedding(x)
-        x = self.transformer(x)
+        x = self.transformer(x, mask=mask)
         x = x.mean(dim=1)
         x = self.regression_head(x)
         return x
