@@ -80,6 +80,6 @@ class TrackFormer(BaseModel):
         """
         Function for extracting the attention matrices
         """
-        x = self.input_net(x)
+        x = self.embedding(x)
         attention_maps = self.transformer.get_attention_maps(x)
         return attention_maps
