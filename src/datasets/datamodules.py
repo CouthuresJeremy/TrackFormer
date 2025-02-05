@@ -257,6 +257,11 @@ class TrackMLDataset(IterBase):
         grouped = merged_df.groupby("particle_id")
 
         for _, group in grouped:
+            # Add custom features
+            if "dphi" in input_variables:
+                # Remove phi of the first hit
+                group["dphi"] = group["tphi"] - group["tphi"].iloc[0]
+
             inputs = group[input_variables].values
             target = group[output_variables].values[0]
 
