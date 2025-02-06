@@ -190,10 +190,17 @@ class TrackMLDataset(IterBase):
 
     def _load_event(self, event_prefix):
         self.event = event_prefix
-        hits = self.path / f"{event_prefix}-hits.csv"
-        particles = self.path / f"{event_prefix}-particles.csv"
-        cells = self.path / f"{event_prefix}-cells.csv"
-        truth = self.path / f"{event_prefix}-truth.csv"
+
+        def get_file_path(filename):
+            # Check if the compressed version exists; otherwise, fall back to uncompressed
+            gz_path = self.path / f"{filename}.csv.gz"
+            csv_path = self.path / f"{filename}.csv"
+            return gz_path if gz_path.exists() else csv_path
+
+        hits = get_file_path(f"{event_prefix}-hits")
+        particles = get_file_path(f"{event_prefix}-particles")
+        cells = get_file_path(f"{event_prefix}-cells")
+        truth = get_file_path(f"{event_prefix}-truth")
         return (
             pd.read_csv(hits),
             pd.read_csv(cells),
