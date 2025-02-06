@@ -268,6 +268,13 @@ class TrackMLDataset(IterBase):
             if "dphi" in input_variables:
                 # Remove phi of the first hit
                 group["dphi"] = group["tphi"] - group["tphi"].iloc[0]
+                # Correct for periodicity
+                group["dphi"] = np.where(
+                    group["dphi"] > np.pi, group["dphi"] - 2 * np.pi, group["dphi"]
+                )
+                group["dphi"] = np.where(
+                    group["dphi"] < -np.pi, group["dphi"] + 2 * np.pi, group["dphi"]
+                )
 
             inputs = group[input_variables].values
             target = group[output_variables].values[0]
