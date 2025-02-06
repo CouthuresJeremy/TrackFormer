@@ -338,14 +338,17 @@ class DatasetWrapper(Dataset):
         self.data_file = self.dataset_dir / f"preprocessed_{self.folder}.pt"
         self.datalist = None
 
+        # Check if dataset is valid
+        if self.dataset_type not in ("tml", "acts"):
+            raise ValueError(
+                f"Invalid dataset type '{dataset}'. Expected 'tml' or 'acts'."
+            )
+
+        # Set the dataset class
         if self.dataset_type == "tml":
             self.ds_class = TrackMLDataset
         elif self.dataset_type == "acts":
             self.ds_class = ActsDataset
-        else:
-            raise ValueError(
-                f"Invalid dataset type '{dataset}'. Expected 'tml' or 'acts'."
-            )
 
         # Add kwargs to the class
         self.ds_class_kwargs = kwargs
@@ -399,14 +402,21 @@ class DataModule(L.LightningDataModule):
         super().__init__()
         self.save_hyperparameters(ignore=["_class_path"])
         dataset = self.hparams.dataset_type.lower()
-        if dataset == "tml":
-            self.dataset_class = DatasetWrapper if use_wrapper else TrackMLDataset
-        elif dataset_type == "acts":
-            self.dataset_class = DatasetWrapper if use_wrapper else ActsDataset
-        else:
+
+        # Check if dataset is valid
+        if dataset not in ("tml", "acts"):
             raise ValueError(
                 f"Invalid dataset_type '{dataset}'. Expected 'tml' or 'acts'."
             )
+
+        # Set the dataset class
+        if use_wrapper:
+            self.dataset_class = DatasetWrapper
+        elif dataset == "tml":
+            self.dataset_class = TrackMLDataset
+        elif dataset == "acts":
+            self.dataset_class = ActsDataset
+
         # Add kwargs to the class
         self.dataset_class_kwargs = kwargs
 
