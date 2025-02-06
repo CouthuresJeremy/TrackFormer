@@ -11,6 +11,7 @@ data:
     persistance: True
     kwargs:
       dataset_suffix: _rphiz_POC
+      wrapper_workers: 0
       min_hits: 3
       min_pt: 0.5
       max_pt: 10

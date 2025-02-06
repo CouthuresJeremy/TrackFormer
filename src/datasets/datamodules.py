@@ -339,6 +339,7 @@ class DatasetWrapper(Dataset):
         self.data_file = (
             self.dataset_dir / f"preprocessed_{self.folder}{dataset_suffix}.pt"
         )
+        self.wrapper_workers = kwargs.pop("wrapper_workers", int(os.cpu_count()))
         self.datalist = None
 
         # Check if dataset is valid
@@ -369,7 +370,7 @@ class DatasetWrapper(Dataset):
                 style="cyan",
             )
             ds = self.ds_class(self.dataset_dir, self.folder, **self.ds_class_kwargs)
-            ds_loader = DataLoader(ds, num_workers=int(os.cpu_count()))
+            ds_loader = DataLoader(ds, num_workers=self.wrapper_workers)
             self.datalist = [
                 [x.squeeze(), y.squeeze(), z.squeeze()] for x, y, z in ds_loader
             ]
