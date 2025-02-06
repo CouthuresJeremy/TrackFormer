@@ -5,9 +5,9 @@ data:
   class_path: src.datasets.datamodules.DataModule
   init_args:
     dataset_type: tml
-    dataset_dir: Data/Tml/train_1
+    dataset_dir: Data/TrackML/training_part01
     batch_size: 1024
-    use_wrapper: False
+    use_wrapper: True
     persistance: True
     kwargs:
       min_hits: 3
