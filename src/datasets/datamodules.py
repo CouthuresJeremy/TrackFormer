@@ -371,9 +371,11 @@ class DatasetWrapper(Dataset):
             )
             ds = self.ds_class(self.dataset_dir, self.folder, **self.ds_class_kwargs)
             ds_loader = DataLoader(ds, num_workers=self.wrapper_workers)
-            self.datalist = [
-                [x.squeeze(), y.squeeze(), z.squeeze()] for x, y, z in ds_loader
-            ]
+            self.datalist = []
+            # Unpack the data and save it
+            for particle_index, variables in enumerate(ds_loader):
+                print(f"Processing particle {particle_index}")
+                self.datalist.append([var.squeeze() for var in variables])
             torch.save(self.datalist, self.data_file)
             console.print(f"Data saved to {self.data_file}")
 
