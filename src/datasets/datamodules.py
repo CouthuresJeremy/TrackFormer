@@ -335,7 +335,10 @@ class DatasetWrapper(Dataset):
         self.dataset_dir = Path(dataset_dir)
         self.dataset_type = dataset.lower()
         self.folder = folder
-        self.data_file = self.dataset_dir / f"preprocessed_{self.folder}.pt"
+        dataset_suffix = kwargs.pop("dataset_suffix", "")
+        self.data_file = (
+            self.dataset_dir / f"preprocessed_{self.folder}{dataset_suffix}.pt"
+        )
         self.datalist = None
 
         # Check if dataset is valid
