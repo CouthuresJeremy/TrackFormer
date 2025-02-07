@@ -18,7 +18,7 @@ trainer:
     - class_path: src.utils.ParmSummary
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
-        filename: model-{epoch:02d}-{val_loss:.2f}
+        filename: model-{epoch:03d}-{val_loss:.3f}
         monitor: val_loss
         verbose: false
         save_top_k: 1
