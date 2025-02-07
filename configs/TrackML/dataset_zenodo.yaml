@@ -10,7 +10,7 @@ data:
     use_wrapper: True
     persistance: True
     kwargs:
-      dataset_suffix: _rphiz_POC
+      dataset_suffix: POC
       wrapper_workers: 0
       min_hits: 3
       min_pt: 0.5

@@ -336,6 +336,15 @@ class DatasetWrapper(Dataset):
         self.dataset_type = dataset.lower()
         self.folder = folder
         dataset_suffix = kwargs.pop("dataset_suffix", "")
+        # Add kwargs input_variables and output_variables if available
+        input_variables = kwargs.get("input_variables", ["tx", "ty", "tz"])
+        output_variables = kwargs.get("output_variables", ["pT", "pz"])
+        variable_suffix = (
+            f"_i_{'_'.join(input_variables)}_o_{'_'.join(output_variables)}"
+        )
+        dataset_suffix = variable_suffix + (
+            "_" + dataset_suffix if dataset_suffix else ""
+        )
         self.data_file = (
             self.dataset_dir / f"preprocessed_{self.folder}{dataset_suffix}.pt"
         )
