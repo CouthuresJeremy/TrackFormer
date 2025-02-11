@@ -203,6 +203,14 @@ class Loss:
             self.loss_fn = mse_loss
         elif "mae" in self.mode:
             self.loss_fn = l1_loss
+        elif "mse_inv" in self.mode:
+            eps = self.mode.split("_")[-1]
+            eps = float(eps)
+            # EPS and absolute value are used to avoid division by zero
+            self.loss_fn = lambda preds, targets: mse_loss(
+                torch.sign(preds) * torch.abs(1 / (preds + eps)),
+                torch.sign(targets) * torch.abs(1 / (targets + eps)),
+            ) + mse_loss(preds, targets)
         else:
             raise ValueError(f"Uknown loss funtion: {self.mode}")
 
