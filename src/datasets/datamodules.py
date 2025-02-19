@@ -260,6 +260,7 @@ class TrackMLDataset(IterBase):
         if any([var not in merged_df.columns for var in output_variables]):
             # Add other track parameters
             merged_df["qopT"] = merged_df["q"] / merged_df["pT"]
+            merged_df["qpT"] = merged_df["q"] * merged_df["pT"]
 
         grouped = merged_df.groupby("particle_id")
 
