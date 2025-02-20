@@ -55,6 +55,33 @@ for i in "${!EVENT_ARRAY[@]}"; do
         dest_dir="test"
     fi
 
+    # Verify the presence of all the files of the event
+    all_files_exist=true
+    for file_type in particles truth hits cells; do
+        src_file="$event-$file_type.csv.gz"
+        if [ ! -f "$src_file" ]; then
+            all_files_exist=false
+            break
+        fi
+    done
+
+    # Skip the event if any of the files are missing
+    if [ "$all_files_exist" = false ]; then
+        echo "Skipping event $event due to missing files."
+        echo "Removing the files that were supposed to be moved..."
+        echo "Following files are missing:"
+        # Remove the files that were supposed to be moved
+        for file_type in particles truth hits cells; do
+            src_file="$event-$file_type.csv.gz"
+            if [ -f "$src_file" ]; then
+                rm "$src_file"
+            else
+                echo "$src_file (missing)"
+            fi
+        done
+        continue
+    fi
+
     for file_type in particles truth hits cells; do
         src_file="$event-$file_type.csv.gz"
         dest_file="$dest_dir/$event-$file_type.csv.gz"
@@ -76,4 +103,5 @@ echo "============================"
 echo "         Summary            "
 echo "============================"
 echo "Total Copies: $total_success / $total_files" 
+echo "Total Events: $((total_success / 4)) / $total_events"
 echo "============================"
