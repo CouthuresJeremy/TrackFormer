@@ -201,11 +201,21 @@ class TrackMLDataset(IterBase):
         particles = get_file_path(f"{event_prefix}-particles")
         cells = get_file_path(f"{event_prefix}-cells")
         truth = get_file_path(f"{event_prefix}-truth")
+        # print(f"Loading event {event_prefix}")
+
+        # Handle empty csv files
+        hits_df = pd.read_csv(hits) if hits.stat().st_size > 0 else pd.DataFrame()
+        cells_df = pd.read_csv(cells) if cells.stat().st_size > 0 else pd.DataFrame()
+        particles_df = (
+            pd.read_csv(particles) if particles.stat().st_size > 0 else pd.DataFrame()
+        )
+        truth_df = pd.read_csv(truth) if truth.stat().st_size > 0 else pd.DataFrame()
+
         return (
-            pd.read_csv(hits),
-            pd.read_csv(cells),
-            pd.read_csv(particles),
-            pd.read_csv(truth),
+            hits_df,
+            cells_df,
+            particles_df,
+            truth_df,
         )
 
     def _preprocessor(self, eventfiles):
@@ -384,8 +394,10 @@ class DatasetWrapper(Dataset):
             self.datalist = []
             # Unpack the data and save it
             for particle_index, variables in enumerate(ds_loader):
-                print(f"Processing particle {particle_index}")
+                if particle_index % 1000 == 0:
+                    print(f"Processing particle {particle_index}")
                 self.datalist.append([var.squeeze() for var in variables])
+            print(f"Processed {len(self.datalist)} particles")
             torch.save(self.datalist, self.data_file)
             console.print(f"Data saved to {self.data_file}")
 
