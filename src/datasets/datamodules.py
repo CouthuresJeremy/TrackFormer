@@ -205,7 +205,15 @@ class TrackMLDataset(IterBase):
 
         # Handle empty csv files
         hits_df = pd.read_csv(hits) if hits.stat().st_size > 0 else pd.DataFrame()
-        cells_df = pd.read_csv(cells) if cells.stat().st_size > 0 else pd.DataFrame()
+        try:
+            cells_df = (
+                pd.read_csv(cells) if cells.stat().st_size > 0 else pd.DataFrame()
+            )
+            # This raises an OSError and EmptyDataError for some non empty files
+        except OSError:
+            cells_df = pd.DataFrame()
+        except pd.errors.EmptyDataError:
+            cells_df = pd.DataFrame()
         particles_df = (
             pd.read_csv(particles) if particles.stat().st_size > 0 else pd.DataFrame()
         )
