@@ -283,6 +283,12 @@ class TrackMLDataset(IterBase):
         grouped = merged_df.groupby("particle_id")
 
         for _, group in grouped:
+            # Sort by the hits by radius
+            if getattr(self, "sort_by_radius", False):
+                if not "tr" in group:
+                    group["tr"] = np.sqrt(group["tx"] ** 2 + group["ty"] ** 2)
+                group = group.sort_values("tr")
+
             # Add custom features
             if "dphi" in input_variables:
                 # Remove phi of the first hit
@@ -294,6 +300,21 @@ class TrackMLDataset(IterBase):
                 group["dphi"] = np.where(
                     group["dphi"] < -np.pi, group["dphi"] + 2 * np.pi, group["dphi"]
                 )
+
+            # Cut scattered tracks
+            if getattr(self, "cut_scattered", False):
+                # The track must be ordered by radius
+                if not getattr(self, "sort_by_radius", False):
+                    raise NotImplementedError(
+                        "cut_scattered requires sort_by_radius to be True"
+                    )
+                scattered = (
+                    (group["dphi"].shift(-1) - group["dphi"])
+                    * (group["dphi"].shift(-2) - group["dphi"].shift(-1))
+                    < 0
+                ).any()
+                if scattered:
+                    continue
 
             inputs = group[input_variables].values
             target = group[output_variables].values[0]

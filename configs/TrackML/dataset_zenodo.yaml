@@ -17,6 +17,8 @@ data:
       max_pt: 10
       keep_secondaries: False
       max_abs_eta: 1
+      sort_by_radius: True
+      cut_scattered: True
       input_variables:
         - tr
         - tphi
