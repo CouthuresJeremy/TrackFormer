@@ -224,6 +224,26 @@ class Loss:
         return self.loss_fn(preds, targets)
 
 
+class Metric:
+    def __init__(self, mode="mse"):
+        super().__init__()
+        self.mode = mode
+
+        if "mse" in self.mode:
+            self.metric_fn = mse_loss
+        elif "mae" in self.mode:
+            self.metric_fn = l1_loss
+        elif "sign" in self.mode:
+            self.metric_fn = lambda preds, targets: torch.mean(
+                (torch.sign(preds) == torch.sign(targets)).float()
+            )
+        else:
+            raise ValueError(f"Uknown metric funtion: {self.mode}")
+
+    def __call__(self, preds, targets):
+        return self.metric_fn(preds, targets)
+
+
 class BaseModel(L.LightningModule):
     """
     Base LightningModule for training and evaluating models.
@@ -239,6 +259,7 @@ class BaseModel(L.LightningModule):
     def __init__(self):
         super().__init__()
         self.criterion = Loss(self.hparams.criterion)
+        self.metric = Metric(self.hparams.metric) if self.hparams.metric else None
 
     def setup(self, stage=None):
         if stage == "fit" and self.trainer.datamodule:
@@ -272,6 +293,22 @@ class BaseModel(L.LightningModule):
             batch_size=inputs.shape[0],
         )
         self.logger.experiment.add_scalars("loss", {mode: loss}, self.global_step)
+        # Early return
+        if self.metric is None:
+            return loss
+
+        # Calculate metric
+        metric = self.metric(preds.squeeze(), label.squeeze())
+        self.log(
+            f"{mode}_{self.metric.mode}_metric",
+            metric,
+            prog_bar=True,
+            logger=False,
+            batch_size=inputs.shape[0],
+        )
+        self.logger.experiment.add_scalars(
+            f"{self.metric.mode}_metric", {mode: metric}, self.global_step
+        )
         return loss
 
     def training_step(self, batch, batch_idx):

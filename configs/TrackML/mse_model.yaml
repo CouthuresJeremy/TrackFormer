@@ -14,4 +14,5 @@ model:
     dropout: 0.1
     input_dropout: 0.1
     criterion: mse
+    metric: sign
     use_scheduler: True

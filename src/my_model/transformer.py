@@ -33,6 +33,7 @@ class TrackFormer(BaseModel):
         use_scheduler=True,
         dropout=0.0,
         input_dropout=0.0,
+        metric=None,
     ):
         self.save_hyperparameters()
         super().__init__()
