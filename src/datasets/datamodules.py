@@ -267,7 +267,11 @@ class TrackMLDataset(IterBase):
         # Get kwargs input_variables if available
         input_variables = getattr(self, "input_variables", ["tx", "ty", "tz"])
 
-        if any([var not in merged_df.columns for var in input_variables]):
+        if (
+            any([var not in merged_df.columns for var in input_variables])
+            or getattr(self, "sort_by_radius", False)
+            or getattr(self, "cut_scattered", False)
+        ):
             # Add other coordinate system
             merged_df["tr"] = np.sqrt(merged_df["tx"] ** 2 + merged_df["ty"] ** 2)
             merged_df["tphi"] = np.arctan2(merged_df["ty"], merged_df["tx"])
@@ -290,7 +294,7 @@ class TrackMLDataset(IterBase):
                 group = group.sort_values("tr")
 
             # Add custom features
-            if "dphi" in input_variables:
+            if "dphi" in input_variables or getattr(self, "cut_scattered", False):
                 # Remove phi of the first hit
                 group["dphi"] = group["tphi"] - group["tphi"].iloc[0]
                 # Correct for periodicity
