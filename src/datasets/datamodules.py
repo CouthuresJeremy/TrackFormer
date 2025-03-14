@@ -320,7 +320,10 @@ class TrackMLDataset(IterBase):
                 if scattered:
                     continue
 
-            if "pT_circle_estimate" in input_variables:
+            if (
+                "pT_circle_estimate" in input_variables
+                or "pT_circle_estimate_inv" in input_variables
+            ):
                 # Estimate pT from the circle fit
                 from src.my_model.benchmarks import CircleFit
 
@@ -333,6 +336,7 @@ class TrackMLDataset(IterBase):
                 r = cf.fit(points).tolist()
                 pt_fit = np.array(r) * 1.0 * 2 * 299_792_458 / 1e9 / 1000
                 group["pT_circle_estimate"] = np.full(group.shape[0], pt_fit)
+                group["pT_circle_estimate_inv"] = 1 / np.full(group.shape[0], pt_fit)
 
             inputs = group[input_variables].values
             target = group[output_variables].values[0]
