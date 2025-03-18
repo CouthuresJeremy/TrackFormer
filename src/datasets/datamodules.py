@@ -287,6 +287,36 @@ class TrackMLDataset(IterBase):
         grouped = merged_df.groupby("particle_id")
 
         for _, group in grouped:
+            # Cut scattered tracks
+            if getattr(self, "cut_scattered", False):
+                # The track must be ordered by radius
+                if not "tr" in group:
+                    group["tr"] = np.sqrt(group["tx"] ** 2 + group["ty"] ** 2)
+                group_sorted = group.sort_values("tr")
+                # Compute the angle between the hits
+                group_sorted["dphi"] = (
+                    group_sorted["tphi"] - group_sorted["tphi"].iloc[0]
+                )
+                # Correct for periodicity
+                group_sorted["dphi"] = np.where(
+                    group_sorted["dphi"] > np.pi,
+                    group_sorted["dphi"] - 2 * np.pi,
+                    group_sorted["dphi"],
+                )
+                group_sorted["dphi"] = np.where(
+                    group_sorted["dphi"] < -np.pi,
+                    group_sorted["dphi"] + 2 * np.pi,
+                    group_sorted["dphi"],
+                )
+                # Check if the angle is monotonically increasing
+                scattered = (
+                    (group_sorted["dphi"].shift(-1) - group_sorted["dphi"])
+                    * (group_sorted["dphi"].shift(-2) - group_sorted["dphi"].shift(-1))
+                    < 0
+                ).any()
+                if scattered:
+                    continue
+
             # Sort by the hits by radius
             if getattr(self, "sort_by_radius", False):
                 if not "tr" in group:
@@ -294,7 +324,7 @@ class TrackMLDataset(IterBase):
                 group = group.sort_values("tr")
 
             # Add custom features
-            if "dphi" in input_variables or getattr(self, "cut_scattered", False):
+            if "dphi" in input_variables:
                 # Remove phi of the first hit
                 group["dphi"] = group["tphi"] - group["tphi"].iloc[0]
                 # Correct for periodicity
@@ -304,21 +334,6 @@ class TrackMLDataset(IterBase):
                 group["dphi"] = np.where(
                     group["dphi"] < -np.pi, group["dphi"] + 2 * np.pi, group["dphi"]
                 )
-
-            # Cut scattered tracks
-            if getattr(self, "cut_scattered", False):
-                # The track must be ordered by radius
-                if not getattr(self, "sort_by_radius", False):
-                    raise NotImplementedError(
-                        "cut_scattered requires sort_by_radius to be True"
-                    )
-                scattered = (
-                    (group["dphi"].shift(-1) - group["dphi"])
-                    * (group["dphi"].shift(-2) - group["dphi"].shift(-1))
-                    < 0
-                ).any()
-                if scattered:
-                    continue
 
             if (
                 "pT_circle_estimate" in input_variables
