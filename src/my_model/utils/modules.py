@@ -45,6 +45,31 @@ def scaled_dot_product(q, k, v, mask=None):
     return values, attention
 
 
+################################### Positional Encoding for RoPE:
+
+
+class RotaryPositionalEncoding(nn.Module):
+    def __init__(self, model_dim):
+        super().__init__()
+        self.model_dim = model_dim
+        theta = 10000 ** (-torch.arange(0, model_dim, 2).float() / model_dim)
+        self.register_buffer("theta", theta)
+
+    def forward(self, q, k):
+        seq_len = q.shape[2]
+        theta = self.theta[: self.model_dim // 2].unsqueeze(0).unsqueeze(0)
+        m = torch.arange(seq_len, device=q.device).float().unsqueeze(1) * theta
+        cos_m, sin_m = torch.cos(m), torch.sin(m)
+
+        q1, q2 = q[..., 0::2], q[..., 1::2]
+        k1, k2 = k[..., 0::2], k[..., 1::2]
+
+        q_rot = torch.cat([q1 * cos_m - q2 * sin_m, q1 * sin_m + q2 * cos_m], dim=-1)
+        k_rot = torch.cat([k1 * cos_m - k2 * sin_m, k1 * sin_m + k2 * cos_m], dim=-1)
+
+        return q_rot, k_rot
+
+
 #################################### TrackFormer layers:
 
 
@@ -59,18 +84,20 @@ class MultiheadAttention(nn.Module):
         num_heads (int): Number of attention heads.
     """
 
-    def __init__(self, input_dim, embed_dim, num_heads):
+    def __init__(self, input_dim, embed_dim, num_heads, use_rope=False):
         super().__init__()
         assert (
             embed_dim % num_heads == 0
-        ), "Embedding dimension must divisible among heads"
+        ), "Embedding dimension must be divisible among heads"
 
         self.embed_dim = embed_dim
         self.num_heads = num_heads
         self.head_dim = embed_dim // num_heads  # d_k
+        self.use_rope = use_rope
 
         self.qkv_proj = nn.Linear(input_dim, 3 * embed_dim)  # stacked matrices
         self.o_proj = nn.Linear(embed_dim, embed_dim)
+        self.rope = RotaryPositionalEncoding(self.head_dim) if use_rope else None
 
         self._reset_parameters()
 
@@ -89,15 +116,15 @@ class MultiheadAttention(nn.Module):
         qkv = qkv.permute(0, 2, 1, 3)  # [B, Head, SeqLen, Dims]
         q, k, v = qkv.chunk(3, dim=-1)
 
+        if self.use_rope:
+            q, k = self.rope(q, k)
+
         values, attention = scaled_dot_product(q, k, v, mask=mask)
         values = values.permute(0, 2, 1, 3)  # [B, SeqLen, Head, Dims]
         values = values.reshape(batch_size, seq_length, self.embed_dim)
         o = self.o_proj(values)
 
-        if return_attention:
-            return o, attention
-        else:
-            return o
+        return (o, attention) if return_attention else o
 
 
 class EncoderBlock(nn.Module):
@@ -111,14 +138,15 @@ class EncoderBlock(nn.Module):
         dropout (float, optional): Dropout rate. Defaults to 0.0.
     """
 
-    def __init__(self, input_dim, num_heads, dim_feedforward, dropout=0.0):
-
+    def __init__(
+        self, input_dim, num_heads, dim_feedforward, dropout=0.0, use_rope=False
+    ):
         super().__init__()
 
         # Attention
-        self.self_attn = MultiheadAttention(input_dim, input_dim, num_heads)
+        self.self_attn = MultiheadAttention(input_dim, input_dim, num_heads, use_rope)
 
-        # ff
+        # Feedforward
         self.linear_net = nn.Sequential(
             nn.Linear(input_dim, dim_feedforward),
             nn.Dropout(dropout),
@@ -154,16 +182,16 @@ class TransformerEncoder(nn.Module):
         )
 
     def forward(self, x, mask=None):
-        for l in self.layers:
-            x = l(x, mask=mask)
+        for layer in self.layers:
+            x = layer(x, mask=mask)
         return x
 
     def get_attention_maps(self, x, mask=None):
         attention_maps = []
-        for l in self.layers:
-            _, attn_map = l.self_attn(x, mask=mask, return_attention=True)
+        for layer in self.layers:
+            _, attn_map = layer.self_attn(x, mask=mask, return_attention=True)
             attention_maps.append(attn_map)
-            x = l(x)
+            x = layer(x)
         return attention_maps
 
 

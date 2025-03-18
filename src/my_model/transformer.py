@@ -2,6 +2,34 @@ import lightning as L
 from torch import nn, optim
 from src.my_model.utils.modules import TransformerEncoder, BaseModel
 import torch
+import math
+
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, model_dim, max_len=5000, mode="sinusoidal"):
+        super().__init__()
+        self.model_dim = model_dim
+        self.mode = mode
+
+        if mode == "sinusoidal":
+            pe = torch.zeros(max_len, model_dim)
+            position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+            div_term = torch.exp(
+                torch.arange(0, model_dim, 2).float() * (-math.log(10000.0) / model_dim)
+            )
+            pe[:, 0::2] = torch.sin(position * div_term)
+            pe[:, 1::2] = torch.cos(position * div_term)
+            pe = pe.unsqueeze(0)
+            self.register_buffer("pe", pe)
+        elif mode == "learnable":
+            self.pe = nn.Parameter(torch.randn(1, max_len, model_dim))
+        else:
+            self.pe = None
+
+    def forward(self, x):
+        if self.pe is not None:
+            return x + self.pe[:, : x.size(1), :]
+        return x
 
 
 class TrackFormer(BaseModel):
@@ -34,13 +62,14 @@ class TrackFormer(BaseModel):
         dropout=0.0,
         input_dropout=0.0,
         metric=None,
+        positional_encoding=None,
     ):
         self.save_hyperparameters()
         super().__init__()
         self._create_model()
 
     def _create_model(self):
-        #  Embedding
+        # Embedding
         self.embedding = nn.Sequential(
             nn.Dropout(self.hparams.input_dropout),
             nn.Linear(self.hparams.input_dim, self.hparams.model_dim),
@@ -55,7 +84,19 @@ class TrackFormer(BaseModel):
             dim_feedforward=2 * self.hparams.model_dim,
             num_heads=self.hparams.num_heads,
             dropout=self.hparams.dropout,
+            use_rope=self.hparams.positional_encoding == "rope",
         )
+
+        # If positional_encoding is None, no extra layers are added
+        if (
+            self.hparams.positional_encoding is None
+            or self.hparams.positional_encoding == "rope"
+        ):
+            self.positional_encoding = None  # RoPE is applied inside attention
+        else:
+            self.positional_encoding = PositionalEncoding(
+                self.hparams.model_dim, mode=self.hparams.positional_encoding
+            )
 
         # regression head
         self.regression_head = nn.Sequential(
@@ -71,6 +112,8 @@ class TrackFormer(BaseModel):
             mask - Mask to apply on the attention outputs
         """
         x = self.embedding(x)
+        if self.positional_encoding is not None:
+            x = self.positional_encoding(x)  # Apply positional encoding if not RoPE
         x = self.transformer(x, mask=mask)
         x = x.mean(dim=1)
         x = self.regression_head(x)
@@ -82,5 +125,7 @@ class TrackFormer(BaseModel):
         Function for extracting the attention matrices
         """
         x = self.embedding(x)
+        if self.positional_encoding is not None:
+            x = self.positional_encoding(x)
         attention_maps = self.transformer.get_attention_maps(x)
         return attention_maps

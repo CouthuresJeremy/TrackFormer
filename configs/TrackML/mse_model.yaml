@@ -16,3 +16,4 @@ model:
     criterion: mse
     metric: sign
     use_scheduler: True
+    positional_encoding: sinusoidal
