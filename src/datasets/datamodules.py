@@ -185,6 +185,155 @@ class IterBase(IterableDataset, ABC):
 ########################################### streamline datasets:
 
 
+def compute_signed_curvature(pT, q, B):
+    """
+    Compute the signed curvature of a track in a uniform magnetic field
+    using Lorentz force.
+
+    Parameters:
+      pT : Transverse momentum (e.g. in GeV)
+      q  : Charge of the particle (in units of elementary charge)
+      B  : Magnetic field strength (in Tesla)
+
+    Returns:
+        signed_kappa: Signed curvature of the track (in m^-1)
+    """
+    signed_kappa = (q / (pT * 1e9)) * (B * 299_792_458)
+    # R = pT * 1e9 / (np.abs(q) * B * 299_792_458)
+    return signed_kappa
+
+
+def compute_circle_parameters(x_v, y_v, phi0, signed_kappa):
+    """
+    Compute the parameters of
+    the circle in the transverse plane.
+
+    Parameters:
+      x_v        : x-coordinate of the production vertex
+      y_v        : y-coordinate of the production vertex
+      phi0       : Initial azimuthal angle of the particle (radians)
+      signed_kappa: Signed curvature of the track
+
+    Returns:
+        x_c, y_c, R: Center and radius of the circle
+    """
+    # Compute the radius of the circle
+    R = 1.0 / np.abs(signed_kappa)
+    # Compute the center of the circle
+    x_c = x_v + (1.0 / signed_kappa) * np.sin(phi0)
+    y_c = y_v - (1.0 / signed_kappa) * np.cos(phi0)
+
+    return x_c, y_c, R
+
+
+def compute_perigee(x_c, y_c, R):
+    """
+    Compute the coordinates of the perigee (point of closest approach)
+    in the transverse plane.
+
+    Parameters:
+      x_c : x-coordinate of the circle center
+      y_c : y-coordinate of the circle center
+      R   : Radius of the circle
+
+    Returns:
+        x_perigee, y_perigee: Coordinates of the perigee
+    """
+    # The perigee in the transverse plane is reached when the azimuth of the circle equals that of its center.
+    phi_c = np.arctan2(y_c, x_c)
+    x_perigee = x_c - R * np.cos(phi_c)
+    y_perigee = y_c - R * np.sin(phi_c)
+
+    return x_perigee, y_perigee
+
+
+def compute_impact_parameters(
+    p_x, p_y, p_z, q, B, x_v, y_v, z_v, reference_point=(0, 0, 0)
+):
+    """
+    Compute the transverse impact parameter d0 and the longitudinal impact parameter z0
+    for a truth track in a uniform field.
+
+    Parameters:
+        p_x, p_y, p_z : Momentum components of the particle (in GeV/c).
+        q             : Charge of the particle (in elementary charge units).
+        B             : Magnetic field strength (in Tesla).
+        x_v, y_v, z_v : Production vertex coordinates (in mm).
+        reference_point: Reference point for the perigee calculation (default: origin).
+
+    Returns:
+        d0 : Signed transverse impact parameter (in mm).
+        z0 : Longitudinal impact parameter (in mm).
+        perigee_coords: (x, y, z) coordinates of the perigee (point of closest approach).
+    """
+    # === Step 0: Express the vertex in the reference frame ===
+    x_ref, y_ref, z_ref = reference_point
+    x_v = x_v - x_ref
+    y_v = y_v - y_ref
+    z_v = z_v - z_ref
+
+    # === Step 1: Calculate curvature and radius ===
+    pT = np.sqrt(p_x**2 + p_y**2)
+    signed_kappa = compute_signed_curvature(pT=pT, q=q, B=B)
+    # Convert to mm^-1
+    signed_kappa = signed_kappa / 1000
+
+    # === Step 2: Compute the circle center in the transverse plane ===
+    phi0 = np.arctan2(p_y, p_x)
+    x_c, y_c, R = compute_circle_parameters(
+        x_v=x_v, y_v=y_v, phi0=phi0, signed_kappa=signed_kappa
+    )
+
+    # === Step 3: Find the perigee (closest approach to the origin) ===
+    x_perigee, y_perigee = compute_perigee(x_c=x_c, y_c=y_c, R=R)
+    # Check that the perigee is on the circle
+    assert np.allclose((x_perigee - x_c) ** 2 + (y_perigee - y_c) ** 2, R**2)
+
+    # === Step 4: Compute the (unsigned) distance from the origin to the perigee ===
+    d0_unsigned = np.sqrt(x_perigee**2 + y_perigee**2)
+
+    # === Step 5: Assign a sign to d0 ===
+    # Sign is given by the z-component of the cross product of the perigee position and the momentum (angular momentum).
+    cross_z = x_perigee * p_y - y_perigee * p_x
+    sign = np.sign(cross_z)
+    # default to +1 if zero
+    # sign = ((sign + 1)/2) - 1
+    # sign[sign == 0] = 1
+
+    d0 = sign * d0_unsigned
+
+    # === Step 6: Compute the z-coordinate at the perigee ===
+    # Compute the path length from the vertex to the perigee
+    # The angle between the vertex and the perigee with respect to the center of the circle
+    # is twice the angle between the vertex and the midpoint of the perigee and the center of the circle.
+    # Compute the distance between the vertex and the perigee
+    d_vertex_perigee = np.sqrt((x_v - x_perigee) ** 2 + (y_v - y_perigee) ** 2)
+    # Compute the distance between the vertex and the midpoint
+    d_vertex_midpoint = d_vertex_perigee / 2
+    # Compute the angle between the vertex and the midpoint
+    angle_vertex_midpoint = np.arctan2(d_vertex_midpoint, R)
+    # Compute the angle between the vertex and the perigee
+    angle_vertex_perigee = 2 * angle_vertex_midpoint
+
+    # Determine the sign of the angle difference
+    # = sign of inner product of the vector from the vertex to the perigee and the momentum
+    propagation_vector_sign = np.sign((x_perigee - x_v) * p_x + (y_perigee - y_v) * p_y)
+    assert (
+        propagation_vector_sign.shape == angle_vertex_perigee.shape
+    ), f"{propagation_vector_sign.shape} != {angle_vertex_perigee.shape}"
+    # Compute the signed angle between the vertex and the perigee
+    angle_vertex_perigee = propagation_vector_sign * angle_vertex_perigee
+
+    # Compute the path length between the vertex and the perigee
+    s_vertex_perigee = R * angle_vertex_perigee
+
+    # Compute the z-coordinate at the perigee using the linear propagation along z
+    z_perigee = z_v + s_vertex_perigee * (p_z / pT)
+    z0 = z_perigee
+
+    return d0, z0, (x_perigee, y_perigee, z_perigee)
+
+
 class TrackMLDataset(IterBase):
     """Iterable class for TrackML"""
 
@@ -283,6 +432,27 @@ class TrackMLDataset(IterBase):
             # Add other track parameters
             merged_df["qopT"] = merged_df["q"] / merged_df["pT"]
             merged_df["qpT"] = merged_df["q"] * merged_df["pT"]
+            merged_df["phi0"] = np.arctan2(merged_df["py"], merged_df["px"])
+            (
+                merged_df["d0"],
+                merged_df["z0"],
+                (
+                    merged_df["x_perigee"],
+                    merged_df["y_perigee"],
+                    merged_df["z_perigee"],
+                ),
+            ) = compute_impact_parameters(
+                p_x=merged_df["px"],
+                p_y=merged_df["py"],
+                p_z=merged_df["pz"],
+                q=merged_df["q"],
+                B=2,
+                x_v=merged_df["vx"],
+                y_v=merged_df["vy"],
+                z_v=merged_df["vz"],
+                reference_point=(0, 0, 0),
+            )
+            merged_df["ptheta"] = np.arctan2(merged_df["pT"], merged_df["pz"])
 
         grouped = merged_df.groupby("particle_id")
 
