@@ -243,6 +243,13 @@ class Loss:
             self.loss_fn = lambda preds, targets: torch.mean(
                 torch.square((preds - targets) / targets)
             )
+        elif "rel_rmse_percent" in self.mode:
+            self.loss_fn = (
+                lambda preds, targets: torch.sqrt(
+                    torch.mean(torch.square((preds - targets) / targets))
+                )
+                * 100
+            )
         else:
             raise ValueError(f"Uknown loss funtion: {self.mode}")
 
