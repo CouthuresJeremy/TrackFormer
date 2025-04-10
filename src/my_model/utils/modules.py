@@ -227,11 +227,11 @@ class Loss:
             _, q = self.mode.split("-")
             self.quantile = float(q)
             self.loss_fn = self._quantile_loss
-        elif "mse" in self.mode:
+        elif "mse" == self.mode:
             self.loss_fn = mse_loss
-        elif "mae" in self.mode:
+        elif "mae" == self.mode:
             self.loss_fn = l1_loss
-        elif "mse_inv" in self.mode:
+        elif "mse_inv" == self.mode:
             eps = self.mode.split("_")[-1]
             eps = float(eps)
             # EPS and absolute value are used to avoid division by zero
@@ -239,11 +239,11 @@ class Loss:
                 torch.sign(preds) * torch.abs(1 / (preds + eps)),
                 torch.sign(targets) * torch.abs(1 / (targets + eps)),
             ) + mse_loss(preds, targets)
-        elif "rel_mse" in self.mode:
+        elif "rel_mse" == self.mode:
             self.loss_fn = lambda preds, targets: torch.mean(
                 torch.square((preds - targets) / targets)
             )
-        elif "rel_rmse_percent" in self.mode:
+        elif "rel_rmse_percent" == self.mode:
             self.loss_fn = (
                 lambda preds, targets: torch.sqrt(
                     torch.mean(torch.square((preds - targets) / targets))
@@ -268,19 +268,19 @@ class Metric:
         super().__init__()
         self.mode = mode
 
-        if "mse" in self.mode:
+        if "mse" == self.mode:
             self.metric_fn = mse_loss
-        elif "mae" in self.mode:
+        elif "mae" == self.mode:
             self.metric_fn = l1_loss
-        elif "sign" in self.mode:
+        elif "sign" == self.mode:
             self.metric_fn = lambda preds, targets: torch.mean(
                 (torch.sign(preds) == torch.sign(targets)).float()
             )
-        elif "resolution_bias" in self.mode:
+        elif "resolution_bias" == self.mode:
             self.metric_fn = lambda preds, targets: torch.mean(
                 (preds - targets) / targets
             )
-        elif "resolution_std" in self.mode:
+        elif "resolution_std" == self.mode:
             self.metric_fn = lambda preds, targets: torch.std(
                 (preds - targets) / targets
             )
