@@ -265,6 +265,14 @@ class Metric:
             self.metric_fn = lambda preds, targets: torch.mean(
                 (torch.sign(preds) == torch.sign(targets)).float()
             )
+        elif "resolution_bias" in self.mode:
+            self.metric_fn = lambda preds, targets: torch.mean(
+                (preds - targets) / targets
+            )
+        elif "resolution_std" in self.mode:
+            self.metric_fn = lambda preds, targets: torch.std(
+                (preds - targets) / targets
+            )
         else:
             raise ValueError(f"Uknown metric funtion: {self.mode}")
 
