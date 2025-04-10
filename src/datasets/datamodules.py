@@ -413,8 +413,17 @@ class TrackMLDataset(IterBase):
             & (np.abs(merged_df["peta"]) <= max_abs_eta)
         ]
 
+        # Get kwargs truth_position if available
+        truth_position = getattr(self, "truth_position", True)
+        if truth_position:
+            # Override reconstructed position by truth position
+            merged_df["x"] = merged_df["tx"]
+            merged_df["y"] = merged_df["ty"]
+            merged_df["z"] = merged_df["tz"]
+
         # Get kwargs input_variables if available
-        input_variables = getattr(self, "input_variables", ["tx", "ty", "tz"])
+        default_inputs = ["x", "y", "z"]
+        input_variables = getattr(self, "input_variables", default_inputs)
 
         if (
             any([var not in merged_df.columns for var in input_variables])
@@ -424,6 +433,8 @@ class TrackMLDataset(IterBase):
             # Add other coordinate system
             merged_df["tr"] = np.sqrt(merged_df["tx"] ** 2 + merged_df["ty"] ** 2)
             merged_df["tphi"] = np.arctan2(merged_df["ty"], merged_df["tx"])
+            merged_df["r"] = np.sqrt(merged_df["x"] ** 2 + merged_df["y"] ** 2)
+            merged_df["phi"] = np.arctan2(merged_df["y"], merged_df["x"])
 
         # Get kwargs output_variables if available
         output_variables = getattr(self, "output_variables", ["pT", "pz"])
@@ -459,11 +470,17 @@ class TrackMLDataset(IterBase):
         for _, group in grouped:
             # Cut scattered tracks
             if getattr(self, "cut_scattered", False):
+                # This is a truth particle cut
+
                 # The track must be ordered by radius
                 if not "tr" in group:
                     group["tr"] = np.sqrt(group["tx"] ** 2 + group["ty"] ** 2)
                 group_sorted = group.sort_values("tr")
                 # Compute the angle between the hits
+                if not "tphi" in group:
+                    group_sorted["tphi"] = np.arctan2(
+                        group_sorted["ty"], group_sorted["tx"]
+                    )
                 group_sorted["dphi"] = (
                     group_sorted["tphi"] - group_sorted["tphi"].iloc[0]
                 )
@@ -489,14 +506,14 @@ class TrackMLDataset(IterBase):
 
             # Sort by the hits by radius
             if getattr(self, "sort_by_radius", False):
-                if not "tr" in group:
-                    group["tr"] = np.sqrt(group["tx"] ** 2 + group["ty"] ** 2)
-                group = group.sort_values("tr")
+                if not "r" in group:
+                    group["r"] = np.sqrt(group["x"] ** 2 + group["y"] ** 2)
+                group = group.sort_values("r")
 
             # Add custom features
             if "dphi" in input_variables:
                 # Remove phi of the first hit
-                group["dphi"] = group["tphi"] - group["tphi"].iloc[0]
+                group["dphi"] = group["phi"] - group["phi"].iloc[0]
                 # Correct for periodicity
                 group["dphi"] = np.where(
                     group["dphi"] > np.pi, group["dphi"] - 2 * np.pi, group["dphi"]
@@ -513,7 +530,7 @@ class TrackMLDataset(IterBase):
                 from src.my_model.benchmarks import CircleFit
 
                 cf = CircleFit()
-                points = group[["tx", "ty"]].values
+                points = group[["x", "y"]].values
                 points = torch.tensor(points, dtype=torch.float32)
 
                 # Make it a batch of 1 2D list of points
