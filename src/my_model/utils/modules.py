@@ -239,6 +239,10 @@ class Loss:
                 torch.sign(preds) * torch.abs(1 / (preds + eps)),
                 torch.sign(targets) * torch.abs(1 / (targets + eps)),
             ) + mse_loss(preds, targets)
+        elif "rel_mse" in self.mode:
+            self.loss_fn = lambda preds, targets: torch.mean(
+                torch.square((preds - targets) / targets)
+            )
         else:
             raise ValueError(f"Uknown loss funtion: {self.mode}")
 
