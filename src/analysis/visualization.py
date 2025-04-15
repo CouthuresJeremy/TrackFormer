@@ -167,6 +167,9 @@ def plot_err_vs_n_hits(
             err_values = pi_pred_values - pi_true_values
             relative_err_values = err_values / pi_true_values
 
+            # Make it percentage
+            relative_err_values = 100 * relative_err_values
+
             plt.subplot(1, len(models), model_index)
             plt.plot(
                 n_hits_values,
