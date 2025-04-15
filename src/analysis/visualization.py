@@ -953,7 +953,8 @@ def plot_pi_relative_error_distributions_low_pt_1_2(
     save=True,
 ):
     """
-    Plot detailed distributions of the relative errors for predicted variables, specifically for tracks with 1 < pT < 2 GeV.
+    Plot detailed distributions of the relative errors for predicted variables,
+    specifically for tracks with 1 < pT < 2 GeV.
     Includes Gaussian fits and statistical analysis.
     """
     # Import needed modules
@@ -995,6 +996,7 @@ def plot_pi_relative_error_distributions_low_pt_1_2(
         model_quantiles = {}
         model_data = {}
         model_bins_dict = {}
+
         # Loop over each model
         for model_name, model_info in models.items():
             # Compute the relative error: (prediction - true)/true
@@ -1011,10 +1013,8 @@ def plot_pi_relative_error_distributions_low_pt_1_2(
 
             model_data[model_name] = relative_errors
 
-            model_mean, model_std = norm.fit(
-                relative_errors
-            )  # Global fit of all the data with MLE
-
+            # Global fit of all the data with MLE
+            model_mean, model_std = norm.fit(relative_errors)
             norm_fits[model_name] = (model_mean, model_std)
 
             # Get the 99.9999% quantile (approximately 5 sigma for normal distribution)
@@ -1136,6 +1136,7 @@ def plot_pi_relative_error_distributions_low_pt_1_2(
                 density=True,
             )
 
+            # Get fit parameters and errors
             model_mean, model_std = norm_fits[model_name]
             model_mean, model_mean_err = model_mean
             model_std, model_std_err = model_std
@@ -1144,10 +1145,12 @@ def plot_pi_relative_error_distributions_low_pt_1_2(
             model_root_mean, model_root_mean_err = model_root_mean
             model_root_std, model_root_std_err = model_root_std
 
+            # Plot fitted curves
             xmin, xmax = plt.xlim()
             x = np.linspace(xmin, xmax, 100)
             p_curve_fit = norm.pdf(x, model_mean, model_std)
             p_root_fit = norm.pdf(x, model_root_mean, model_root_std)
+
             plt.plot(
                 x,
                 p_curve_fit,
