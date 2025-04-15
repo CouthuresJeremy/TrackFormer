@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from scipy.stats import norm, scoreatpercentile
 from scipy.optimize import curve_fit
+from typing import Dict, List, Tuple, Any
 
 from src.analysis.utils import var_to_pT, compute_track_resolution, compute_likelyhood
 
@@ -79,6 +80,81 @@ def sync_plot_limits():
         plt.ylim(bottom, top)
 
 
+# Helper functions to reduce code duplication
+def prepare_data(
+    p_true_list: List[np.ndarray],
+    models: Dict[str, Dict[str, Any]],
+    config: Dict[str, Any],
+    var_index: int,
+    var: str,
+    low_pt: bool = False,
+) -> Tuple[np.ndarray, Dict[str, np.ndarray], np.ndarray]:
+    """
+    Prepare data for visualization.
+
+    Args:
+        p_true_list: List of true parameter values
+        models: Dictionary of models with their data
+        config: Configuration dictionary
+        var_index: Index of the variable to process
+        var: Name of the variable to process
+        low_pt: Whether to filter for low pT tracks
+
+    Returns:
+        Tuple of (true_values, model_predictions, mask)
+        where mask is a boolean array indicating kepted tracks
+    """
+    # Extract true values for the current variable
+    pi_true_values = np.array(p_true_list)[:, var_index]
+    if var == "p_T":
+        pi_true_values = var_to_pT(
+            values=pi_true_values, from_var=config["output_variables"][var_index]
+        )
+
+    # Generate low pT mask
+    if low_pt:
+        mask = generate_low_pt_mask(p_true_list, config)
+    else:
+        mask = np.ones(len(pi_true_values), dtype=bool)
+
+    # Apply the pT mask to true values
+    pi_true_values = pi_true_values[mask]
+
+    # Extract model predictions
+    model_predictions = {}
+    for model_name, model_info in models.items():
+        pi_pred_values = np.array(model_info["data_list"])[:, var_index]
+        if var == "p_T":
+            pi_pred_values = var_to_pT(
+                values=pi_pred_values,
+                from_var=config["output_variables"][var_index],
+            )
+
+        # Apply the pT mask to predictions
+        pi_pred_values = pi_pred_values[mask]
+
+        model_predictions[model_name] = pi_pred_values
+
+    return pi_true_values, model_predictions, mask
+
+
+def generate_low_pt_mask(p_true_list, config):
+    # Create mask for low pT tracks
+    assert any(v in config["output_variables"] for v in ["pT", "qopT", "qpT"])
+    if "pT" in config["output_variables"]:
+        pt_true = np.array(p_true_list)[:, config["output_variables"].index("pT")]
+    elif "qopT" in config["output_variables"]:
+        qopt_true = np.array(p_true_list)[:, config["output_variables"].index("qopT")]
+        pt_true = 1 / np.abs(qopt_true)
+    elif "qpT" in config["output_variables"]:
+        qpt_true = np.array(p_true_list)[:, config["output_variables"].index("qpT")]
+        pt_true = np.abs(qpt_true)
+
+    # Select only events with p_T < 10 GeV
+    mask = pt_true < 10
+    return mask
+
+
 def plot_err_vs_n_hits(
     target_labels,
     p_true_list,
@@ -96,12 +172,10 @@ def plot_err_vs_n_hits(
     """Plot error vs number of hits."""
     for var_index, var in enumerate(target_labels):
         # Get the true values for the current variable.
-        pi_true_values = np.array(p_true_list)[:, var_index]
+        pi_true_values, model_predictions, _ = prepare_data(
+            p_true_list, models, config, var_index, var, low_pt
+        )
         n_hits_values = np.array(n_hits_list)
-        if var == "p_T":
-            pi_true_values = var_to_pT(
-                values=pi_true_values, from_var=config["output_variables"][var_index]
-            )
 
         title = f"${var}^{{true}}$ vs ${var}^{{pred}}$"
         if low_pt:
@@ -124,45 +198,13 @@ def plot_err_vs_n_hits(
             filename = filename.replace(".", "_low_pt.")
         filename = output_dir / filename
 
-        if low_pt:
-            assert any(v in config["output_variables"] for v in ["pT", "qopT", "qpT"])
-            if "pT" in config["output_variables"]:
-                pt_true = np.array(p_true_list)[
-                    :, config["output_variables"].index("pT")
-                ]
-            elif "qopT" in config["output_variables"]:
-                qopt_true = np.array(p_true_list)[
-                    :, config["output_variables"].index("qopT")
-                ]
-                pt_true = 1 / np.abs(qopt_true)
-            elif "qpT" in config["output_variables"]:
-                qpt_true = np.array(p_true_list)[
-                    :, config["output_variables"].index("qpT")
-                ]
-                pt_true = np.abs(qpt_true)
-
-            # Select only events with p_T < 10 GeV.
-            mask = pt_true < 10
-
-            # Apply the pT mask.
-            pi_true_values = pi_true_values[mask]
-
         # Plot pt_true and pt_pred
         plt.figure(figsize=(6 * len(models), 6))
         plt.suptitle(title, fontsize=16)
 
         # Loop over each model.
-        for model_index, model_info in enumerate(models.values(), start=1):
-            pi_pred_values = np.array(model_info["data_list"])[:, var_index]
-            if var == "p_T":
-                pi_pred_values = var_to_pT(
-                    values=pi_pred_values,
-                    from_var=config["output_variables"][var_index],
-                )
-
-            if low_pt:
-                # Apply the same pT mask.
-                pi_pred_values = pi_pred_values[mask]
+        for model_index, (model_name, model_info) in enumerate(models.items(), start=1):
+            pi_pred_values = model_predictions[model_name]
 
             err_values = pi_pred_values - pi_true_values
             relative_err_values = err_values / pi_true_values
@@ -212,11 +254,9 @@ def plot_pi_true_vs_pred(
     """Plot true values vs predicted values."""
     for var_index, var in enumerate(target_labels):
         # Get the true values for the current variable.
-        pi_true_values = np.array(p_true_list)[:, var_index]
-        if var == "p_T":
-            pi_true_values = var_to_pT(
-                values=pi_true_values, from_var=config["output_variables"][var_index]
-            )
+        pi_true_values, model_predictions, _ = prepare_data(
+            p_true_list, models, config, var_index, var, low_pt
+        )
 
         title = f"${var}^{{true}}$ vs ${var}^{{pred}}$"
         if low_pt:
@@ -232,29 +272,6 @@ def plot_pi_true_vs_pred(
             filename = filename.replace(".", "_low_pt.")
         filename = output_dir / filename
 
-        if low_pt:
-            assert any(v in config["output_variables"] for v in ["pT", "qopT", "qpT"])
-            if "pT" in config["output_variables"]:
-                pt_true = np.array(p_true_list)[
-                    :, config["output_variables"].index("pT")
-                ]
-            elif "qopT" in config["output_variables"]:
-                qopt_true = np.array(p_true_list)[
-                    :, config["output_variables"].index("qopT")
-                ]
-                pt_true = 1 / np.abs(qopt_true)
-            elif "qpT" in config["output_variables"]:
-                qpt_true = np.array(p_true_list)[
-                    :, config["output_variables"].index("qpT")
-                ]
-                pt_true = np.abs(qpt_true)
-
-            # Select only events with p_T < 10 GeV.
-            mask = pt_true < 10
-
-            # Apply the pT mask.
-            pi_true_values = pi_true_values[mask]
-
         # Plot pt_true and pt_pred
         plt.figure(figsize=(6 * len(models), 6))
         plt.suptitle(title, fontsize=16)
@@ -263,17 +280,8 @@ def plot_pi_true_vs_pred(
         max_pi_true = max(pi_true_values)
 
         # Loop over each model.
-        for model_index, model_info in enumerate(models.values(), start=1):
-            pi_pred_values = np.array(model_info["data_list"])[:, var_index]
-            if var == "p_T":
-                pi_pred_values = var_to_pT(
-                    values=pi_pred_values,
-                    from_var=config["output_variables"][var_index],
-                )
-
-            if low_pt:
-                # Apply the same pT mask.
-                pi_pred_values = pi_pred_values[mask]
+        for model_index, (model_name, model_info) in enumerate(models.items(), start=1):
+            pi_pred_values = model_predictions[model_name]
 
             plt.subplot(1, len(models), model_index)
             plt.plot(
@@ -325,11 +333,9 @@ def plot_pi_error_distributions(
 ):
     """Plot error distributions."""
     for var_index, var in enumerate(target_labels):
-        pi_true_values = np.array(p_true_list)[:, var_index]
-        if var == "p_T":
-            pi_true_values = var_to_pT(
-                values=pi_true_values, from_var=config["output_variables"][var_index]
-            )
+        pi_true_values, model_predictions, _ = prepare_data(
+            p_true_list, models, config, var_index, var, low_pt=False
+        )
 
         title = f"Error Distributions for ${var}$"
         title += title_suffix
@@ -348,13 +354,8 @@ def plot_pi_error_distributions(
         plt.suptitle(title, fontsize=16)
 
         # Loop over each model.
-        for model_index, model_info in enumerate(models.values(), start=1):
-            pi_pred_values = np.array(model_info["data_list"])[:, var_index]
-            if var == "p_T":
-                pi_pred_values = var_to_pT(
-                    values=pi_pred_values,
-                    from_var=config["output_variables"][var_index],
-                )
+        for model_index, (model_name, model_info) in enumerate(models.items(), start=1):
+            pi_pred_values = model_predictions[model_name]
 
             errors = pi_pred_values - pi_true_values
 
@@ -401,11 +402,9 @@ def plot_pi_rel_resolutions(
 ):
     """Plot relative resolutions."""
     for var_index, var in enumerate(target_labels):
-        pi_true_values = np.array(p_true_list)[:, var_index]
-        if var == "p_T":
-            pi_true_values = var_to_pT(
-                values=pi_true_values, from_var=config["output_variables"][var_index]
-            )
+        pi_true_values, model_predictions, _ = prepare_data(
+            p_true_list, models, config, var_index, var, low_pt=low_pt
+        )
 
         title = f"Relative resolution for ${var}$"
         if low_pt:
@@ -430,29 +429,6 @@ def plot_pi_rel_resolutions(
             filename = filename.replace(".", "_pruning.")
         filename = output_dir / filename
 
-        if low_pt:
-            assert any(v in config["output_variables"] for v in ["pT", "qopT", "qpT"])
-            if "pT" in config["output_variables"]:
-                pt_true = np.array(p_true_list)[
-                    :, config["output_variables"].index("pT")
-                ]
-            elif "qopT" in config["output_variables"]:
-                qopt_true = np.array(p_true_list)[
-                    :, config["output_variables"].index("qopT")
-                ]
-                pt_true = 1 / np.abs(qopt_true)
-            elif "qpT" in config["output_variables"]:
-                qpt_true = np.array(p_true_list)[
-                    :, config["output_variables"].index("qpT")
-                ]
-                pt_true = np.abs(qpt_true)
-
-            # Select only events with p_T < 10 GeV.
-            mask = pt_true < 10
-
-            # Apply the pT mask.
-            pi_true_values = pi_true_values[mask]
-
         # Plot pt_true and pt_pred
         plt.figure(figsize=(6 * len(models), 6))
         plt.suptitle(title, fontsize=16)
@@ -469,16 +445,7 @@ def plot_pi_rel_resolutions(
         # Loop over each model.
         model_data = {}
         for model_name, model_info in models.items():
-            pi_pred_values = np.array(model_info["data_list"])[:, var_index]
-            if var == "p_T":
-                pi_pred_values = var_to_pT(
-                    values=pi_pred_values,
-                    from_var=config["output_variables"][var_index],
-                )
-
-            if low_pt:
-                # Apply the same pT mask.
-                pi_pred_values = pi_pred_values[mask]
+            pi_pred_values = model_predictions[model_name]
 
             errors = pi_pred_values - pi_true_values
             relative_errors = errors / pi_true_values
@@ -505,16 +472,7 @@ def plot_pi_rel_resolutions(
                         relative_errors_bin
                     ), np.std(relative_errors_bin)
                 else:
-                    pi_pred_values = np.array(model_info["data_list"])[:, var_index]
-                    if var == "p_T":
-                        pi_pred_values = var_to_pT(
-                            values=pi_pred_values,
-                            from_var=config["output_variables"][var_index],
-                        )
-
-                    if low_pt:
-                        # Apply the same pT mask.
-                        pi_pred_values = pi_pred_values[mask]
+                    pi_pred_values = model_predictions[model_name]
 
                     relative_errors_bin_pruned, removed_outliers_bin = (
                         compute_track_resolution(
@@ -656,11 +614,9 @@ def plot_2d_histogram(
 ):
     """Plot 2D histograms of relative errors vs true values."""
     for var_index, var in enumerate(target_labels):
-        pi_true_values = np.array(p_true_list)[:, var_index]
-        if var == "p_T":
-            pi_true_values = var_to_pT(
-                values=pi_true_values, from_var=config["output_variables"][var_index]
-            )
+        pi_true_values, model_predictions, _ = prepare_data(
+            p_true_list, models, config, var_index, var, low_pt=False
+        )
 
         title = f"Relative error resolution for ${var}$"
         title += title_suffix
@@ -687,13 +643,8 @@ def plot_2d_histogram(
 
         # Loop over each model.
         y_range = (-1, 1)
-        for model_index, model_info in enumerate(models.values(), start=1):
-            pi_pred_values = np.array(model_info["data_list"])[:, var_index]
-            if var == "p_T":
-                pi_pred_values = var_to_pT(
-                    values=pi_pred_values,
-                    from_var=config["output_variables"][var_index],
-                )
+        for model_index, (model_name, model_info) in enumerate(models.items(), start=1):
+            pi_pred_values = model_predictions[model_name]
 
             errors = pi_pred_values - pi_true_values
             relative_errors = errors / pi_true_values
@@ -739,11 +690,9 @@ def plot_pi_relative_error_distributions(
     Plot distributions of the relative errors for the predicted variables.
     """
     for var_index, var in enumerate(target_labels):
-        pi_true_values = np.array(p_true_list)[:, var_index]
-        if var == "p_T":
-            pi_true_values = var_to_pT(
-                values=pi_true_values, from_var=config["output_variables"][var_index]
-            )
+        pi_true_values, model_predictions, _ = prepare_data(
+            p_true_list, models, config, var_index, var, low_pt=low_pt
+        )
 
         title = f"Relative Error Distributions for ${var}$"
         if abs:
@@ -765,29 +714,6 @@ def plot_pi_relative_error_distributions(
             filename = filename.replace(".", "_low_pt.")
         filename = output_dir / filename
 
-        if low_pt:
-            assert any(v in config["output_variables"] for v in ["pT", "qopT", "qpT"])
-            if "pT" in config["output_variables"]:
-                pt_true = np.array(p_true_list)[
-                    :, config["output_variables"].index("pT")
-                ]
-            elif "qopT" in config["output_variables"]:
-                qopt_true = np.array(p_true_list)[
-                    :, config["output_variables"].index("qopT")
-                ]
-                pt_true = 1 / np.abs(qopt_true)
-            elif "qpT" in config["output_variables"]:
-                qpt_true = np.array(p_true_list)[
-                    :, config["output_variables"].index("qpT")
-                ]
-                pt_true = np.abs(qpt_true)
-
-            # Select only events with p_T < 10 GeV.
-            mask = pt_true < 10
-
-            # Apply the pT mask.
-            pi_true_values = pi_true_values[mask]
-
         # Plot pt_true and pt_pred
         plt.figure(figsize=(6 * len(models), 6))
         plt.suptitle(title, fontsize=16)
@@ -795,15 +721,7 @@ def plot_pi_relative_error_distributions(
         # Loop over each model.
         model_data = {}
         for model_name, model_info in models.items():
-            pi_pred_values = np.array(model_info["data_list"])[:, var_index]
-            if var == "p_T":
-                pi_pred_values = var_to_pT(
-                    values=pi_pred_values,
-                    from_var=config["output_variables"][var_index],
-                )
-            if low_pt:
-                # Apply the same pT mask.
-                pi_pred_values = pi_pred_values[mask]
+            pi_pred_values = model_predictions[model_name]
 
             errors = pi_pred_values - pi_true_values
             relative_errors = errors / pi_true_values
@@ -863,11 +781,9 @@ def plot_pi_error_distributions_p(
     Plot distributions of the errors for the predicted variables, with special handling for q/p_T.
     """
     for var_index, var in enumerate(target_labels):
-        pi_true_values = np.array(p_true_list)[:, var_index]
-        if var == "p_T":
-            pi_true_values = var_to_pT(
-                values=pi_true_values, from_var=config["output_variables"][var_index]
-            )
+        pi_true_values, model_predictions, _ = prepare_data(
+            p_true_list, models, config, var_index, var, low_pt=False
+        )
 
         title = f"Relative Error Distributions for ${var}$"
         title += title_suffix
@@ -888,12 +804,7 @@ def plot_pi_error_distributions_p(
         # Loop over each model.
         model_data = {}
         for model_name, model_info in models.items():
-            pi_pred_values = np.array(model_info["data_list"])[:, var_index]
-            if var == "p_T":
-                pi_pred_values = var_to_pT(
-                    values=pi_pred_values,
-                    from_var=config["output_variables"][var_index],
-                )
+            pi_pred_values = model_predictions[model_name]
 
             errors = pi_pred_values - pi_true_values
             if var == "q/p_T":
