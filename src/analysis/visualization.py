@@ -186,12 +186,8 @@ def plot_err_vs_n_hits(
 
         sync_plot_limits()
 
-        if len(models) > 1:
-            plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-        else:
-            plt.tight_layout()
         if save:
-            plt.savefig(filename, format="png")
+            plt.savefig(filename, format="png", bbox_inches="tight")
         if show:
             plt.show()
         plt.close()
@@ -305,12 +301,8 @@ def plot_pi_true_vs_pred(
 
         sync_plot_limits()
 
-        if len(models) > 1:
-            plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-        else:
-            plt.tight_layout()
         if save:
-            plt.savefig(filename, format="png")
+            plt.savefig(filename, format="png", bbox_inches="tight")
         if show:
             plt.show()
         plt.close()
@@ -383,12 +375,8 @@ def plot_pi_error_distributions(
 
         sync_plot_limits()
 
-        if len(models) > 1:
-            plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-        else:
-            plt.tight_layout()
         if save:
-            plt.savefig(filename, format="png")
+            plt.savefig(filename, format="png", bbox_inches="tight")
         if show:
             plt.show()
         plt.close()
@@ -588,9 +576,8 @@ def plot_pi_rel_resolutions(
 
         sync_plot_limits()
 
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         if save:
-            plt.savefig(filename, format="png")
+            plt.savefig(filename, format="png", bbox_inches="tight")
         if show:
             plt.show()
         plt.close()
@@ -636,7 +623,6 @@ def plot_pi_rel_resolutions(
         plt.grid(True, linestyle="--", alpha=0.7)
         plt.legend()
         plt.title(title)
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         if var == "p_T":
             if config["output_variables"][0] == "qopT":
                 plt.ylim(-30, 30)
@@ -647,7 +633,7 @@ def plot_pi_rel_resolutions(
             if pruning:
                 plt.ylim(-20, 20)
         if save:
-            plt.savefig(filename, format="png")
+            plt.savefig(filename, format="png", bbox_inches="tight")
         if show:
             plt.show()
         plt.close()
@@ -725,9 +711,8 @@ def plot_2d_histogram(
             plt.title(f"{model_info['label']} Model")
             plt.grid(True, linestyle="--", alpha=0.7)
 
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         if save:
-            plt.savefig(filename, format="png")
+            plt.savefig(filename, format="png", bbox_inches="tight")
         if show:
             plt.show()
         plt.close()
@@ -852,9 +837,8 @@ def plot_pi_relative_error_distributions(
 
         sync_plot_limits()
 
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         if save:
-            plt.savefig(filename, format="png")
+            plt.savefig(filename, format="png", bbox_inches="tight")
         if show:
             plt.show()
         plt.close()
@@ -946,9 +930,8 @@ def plot_pi_error_distributions_p(
 
         sync_plot_limits()
 
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         if save:
-            plt.savefig(filename, format="png")
+            plt.savefig(filename, format="png", bbox_inches="tight")
         if show:
             plt.show()
         plt.close()
@@ -1184,10 +1167,8 @@ def plot_pi_relative_error_distributions_low_pt_1_2(
             plt.grid(True, linestyle="--", alpha=0.7)
             plt.legend()
 
-        # plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-        plt.tight_layout()
         if save:
-            plt.savefig(filename, format="png")
+            plt.savefig(filename, format="png", bbox_inches="tight")
         if show:
             plt.show()
         plt.close()
