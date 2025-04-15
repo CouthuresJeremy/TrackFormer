@@ -1118,6 +1118,10 @@ def plot_pi_relative_error_distributions_low_pt_1_2(
             except ImportError:
                 # ROOT is not available, use normal distribution fit instead
                 model_root_fits[model_name] = norm_fits[model_name]
+            except Exception as e:
+                # Handle any other exceptions that may occur
+                print(f"Error fitting ROOT histogram for {model_name}: {e}")
+                model_root_fits[model_name] = norm_fits[model_name]
 
         # Plot histograms and fits
         plt.figure(figsize=(6 * len(models), 6))
