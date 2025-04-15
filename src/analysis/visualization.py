@@ -989,6 +989,7 @@ def plot_pi_relative_error_distributions_low_pt_1_2(
             pi_true_values = var_to_pT(
                 values=pi_true_values, from_var=config["output_variables"][var_index]
             )
+        pi_true_values = pi_true_values[mask]
 
         # Add a gaussian with mean and std of the distribution
         model_root_fits = {}
@@ -1006,10 +1007,11 @@ def plot_pi_relative_error_distributions_low_pt_1_2(
                     values=pi_pred_values,
                     from_var=config["output_variables"][var_index],
                 )
+            # Apply the same pT mask
+            pi_pred_values = pi_pred_values[mask]
+
             errors = pi_pred_values - pi_true_values
             relative_errors = errors / pi_true_values
-            # Apply the same pT mask
-            relative_errors = relative_errors[mask]
 
             model_data[model_name] = relative_errors
 
