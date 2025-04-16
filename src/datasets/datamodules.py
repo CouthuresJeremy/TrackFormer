@@ -638,21 +638,25 @@ class DatasetWrapper(Dataset):
             console.print(f"Loading data from {self.data_file}", style="cyan")
             self.datalist = torch.load(self.data_file)
         else:
-            console.print(
-                "Preprocessed data not found. Processing and saving data...",
-                style="cyan",
-            )
-            ds = self.ds_class(self.dataset_dir, self.folder, **self.ds_class_kwargs)
-            ds_loader = DataLoader(ds, num_workers=self.wrapper_workers)
-            self.datalist = []
-            # Unpack the data and save it
-            for particle_index, variables in enumerate(ds_loader):
-                if particle_index % 1000 == 0:
-                    print(f"Processing particle {particle_index}")
-                self.datalist.append([var.squeeze() for var in variables])
-            print(f"Processed {len(self.datalist)} particles")
-            torch.save(self.datalist, self.data_file)
-            console.print(f"Data saved to {self.data_file}")
+            self._preprocess_data()
+
+    def _preprocess_data(self):
+        """Preprocesses the dataset if not already done."""
+        console.print(
+            "Preprocessed data not found. Processing and saving data...",
+            style="cyan",
+        )
+        ds = self.ds_class(self.dataset_dir, self.folder, **self.ds_class_kwargs)
+        ds_loader = DataLoader(ds, num_workers=self.wrapper_workers)
+        self.datalist = []
+        # Unpack the data and save it
+        for particle_index, variables in enumerate(ds_loader):
+            if particle_index % 1000 == 0:
+                print(f"Processing particle {particle_index}")
+            self.datalist.append([var.squeeze() for var in variables])
+        print(f"Processed {particle_index+1} particles")
+        torch.save(self.datalist, self.data_file)
+        console.print(f"Data saved to {self.data_file}")
 
     def __getitem__(self, index):
         return self.datalist[index]
