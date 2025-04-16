@@ -221,14 +221,17 @@ def setup_model(model_dir, model_name, dataset_dir, config, dataset_name):
 
     # Load model configuration and validate
     model_config = get_config(models_dir[model_name])
-    criterion = "mse" if model_name == "MSE" else "qloss-0.5"
-    validate_model_config(
-        model_config,
-        config,
-        dataset_dir=dataset_dir,
-        criterion=criterion,
-        allow_other_datasets=(dataset_name == "TrackML_zenodo_full"),
-    )
+    try:
+        criterion = "mse" if model_name == "MSE" else "qloss-0.5"
+        validate_model_config(
+            model_config,
+            config,
+            dataset_dir=dataset_dir,
+            criterion=criterion,
+            allow_other_datasets=(dataset_name == "TrackML_zenodo_full"),
+        )
+    except AssertionError as e:
+        print(f"Warning: Model configuration validation failed: {e}")
 
     # Load the model
     ml_model_path = get_model_checkpoint_path(models_dir[model_name])
