@@ -595,7 +595,9 @@ class DatasetWrapper(Dataset):
         folder (str): (train, test, val) to load.
     """
 
-    def __init__(self, dataset_dir, folder, dataset="tml", **kwargs):
+    def __init__(
+        self, dataset_dir, folder, dataset="tml", split_size=1_000_000, **kwargs
+    ):
         self.dataset_dir = Path(dataset_dir)
         self.dataset_type = dataset.lower()
         self.folder = folder
@@ -612,6 +614,7 @@ class DatasetWrapper(Dataset):
         self.data_file = (
             self.dataset_dir / f"preprocessed_{self.folder}{dataset_suffix}.pt"
         )
+        self.split_size = split_size  # Number of samples per split
         self.wrapper_workers = kwargs.pop("wrapper_workers", int(os.cpu_count()))
         self.datalist = None
 
@@ -634,11 +637,50 @@ class DatasetWrapper(Dataset):
 
     def __setup(self):
         """Sets up the dataset by loading from preprocessed data if available, or processing and saving it."""
+        # Preprocess the data if not already done
+        if not self._is_preprocessed():
+            self._preprocess_data()
+
+        # Load the data from the preprocessed file
         if self.data_file.is_file():
             console.print(f"Loading data from {self.data_file}", style="cyan")
             self.datalist = torch.load(self.data_file)
         else:
-            self._preprocess_data()
+            self.datalist = self._load_split_data()
+
+    def _is_preprocessed(self):
+        """Check if the dataset has been preprocessed."""
+        return self.data_file.is_file() or self._is_split_data()
+
+    def _is_split_data(self):
+        """Check if the dataset is split into multiple files."""
+        first_split_filename = self.data_file.with_name(
+            f"preprocessed_{self.folder}{self.data_file.suffix}_0"
+        )
+        return first_split_filename.is_file()
+
+    def _load_split_data(self):
+        """Loads the split data from multiple files."""
+        datalist = []
+        i = 0
+        while True:
+            split_filename = self.data_file.with_name(
+                f"preprocessed_{self.folder}{self.data_file.suffix}_{i}"
+            )
+            if split_filename.is_file():
+                console.print(f"Loading split data from {split_filename}", style="cyan")
+                split_data = torch.load(split_filename)
+                datalist.extend(split_data)
+                i += 1
+            else:
+                break
+        return datalist
+
+    def _load_full_data(self):
+        """Loads the entire dataset from a single file."""
+        if self.data_file.is_file():
+            console.print(f"Loading data from {self.data_file}", style="cyan")
+            return torch.load(self.data_file)
 
     def _preprocess_data(self):
         """Preprocesses the dataset if not already done."""
@@ -648,15 +690,45 @@ class DatasetWrapper(Dataset):
         )
         ds = self.ds_class(self.dataset_dir, self.folder, **self.ds_class_kwargs)
         ds_loader = DataLoader(ds, num_workers=self.wrapper_workers)
-        self.datalist = []
-        # Unpack the data and save it
+        chunk_data = []
         for particle_index, variables in enumerate(ds_loader):
             if particle_index % 1000 == 0:
                 print(f"Processing particle {particle_index}")
-            self.datalist.append([var.squeeze() for var in variables])
+
+            # Add the current batch of data to the chunk
+            chunk_data.append([var.squeeze() for var in variables])
+
+            # If the chunk reaches the split_size, save it and clear the chunk
+            if len(chunk_data) >= self.split_size:
+                self._save_data(chunk_data)
+                chunk_data.clear()  # Clear the chunk after saving
+
+        # Save any remaining data after the loop ends
+        if chunk_data:
+            self._save_data(chunk_data)
+
         print(f"Processed {particle_index+1} particles")
-        torch.save(self.datalist, self.data_file)
-        console.print(f"Data saved to {self.data_file}")
+
+    def _save_data(self, data):
+        """Saves the dataset chunk, splitting it into parts if necessary based on split_size."""
+        # Save the chunk to a split file
+        split_filename = self.data_file.with_name(
+            f"preprocessed_{self.folder}{self.data_file.suffix}_{self._get_next_split_index()}"
+        )
+        torch.save(data, split_filename)
+        print(f"Chunk dataset saved to {split_filename}")
+
+    def _get_next_split_index(self):
+        """Get the next index for the split dataset file."""
+        # Check how many files already exist
+        i = 0
+        while (
+            self.data_file.with_name(
+                f"preprocessed_{self.folder}{self.data_file.suffix}_{i}"
+            )
+        ).is_file():
+            i += 1
+        return i
 
     def __getitem__(self, index):
         return self.datalist[index]
