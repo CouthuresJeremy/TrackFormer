@@ -404,7 +404,7 @@ def generate_plots(
 
     target_labels_list = [[variable_labels[var] for var in config["output_variables"]]]
     if config["output_variables"][0] in ["qopT", "qpT"]:
-        target_labels_list.append("p_T")
+        target_labels_list.append(["p_T"])
 
     # Generate selected plots
     for plot_type in plots_to_generate:
