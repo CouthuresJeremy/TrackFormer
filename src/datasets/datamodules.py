@@ -611,8 +611,9 @@ class DatasetWrapper(Dataset):
         dataset_suffix = variable_suffix + (
             "_" + dataset_suffix if dataset_suffix else ""
         )
+        self.data_file_suffix = dataset_suffix
         self.data_file = (
-            self.dataset_dir / f"preprocessed_{self.folder}{dataset_suffix}.pt"
+            self.dataset_dir / f"preprocessed_{self.folder}{self.data_file_suffix}.pt"
         )
         self.split_size = split_size  # Number of samples per split
         self.wrapper_workers = kwargs.pop("wrapper_workers", int(os.cpu_count()))
@@ -655,7 +656,7 @@ class DatasetWrapper(Dataset):
     def _is_split_data(self):
         """Check if the dataset is split into multiple files."""
         first_split_filename = self.data_file.with_name(
-            f"preprocessed_{self.folder}{self.data_file.suffix}_0"
+            f"preprocessed_{self.folder}{self.data_file_suffix}_{0}{self.data_file.suffix}"
         )
         return first_split_filename.is_file()
 
@@ -665,7 +666,7 @@ class DatasetWrapper(Dataset):
         i = 0
         while True:
             split_filename = self.data_file.with_name(
-                f"preprocessed_{self.folder}{self.data_file.suffix}_{i}"
+                f"preprocessed_{self.folder}{self.data_file_suffix}_{i}{self.data_file.suffix}"
             )
             if split_filename.is_file():
                 console.print(f"Loading split data from {split_filename}", style="cyan")
@@ -713,7 +714,7 @@ class DatasetWrapper(Dataset):
         """Saves the dataset chunk, splitting it into parts if necessary based on split_size."""
         # Save the chunk to a split file
         split_filename = self.data_file.with_name(
-            f"preprocessed_{self.folder}{self.data_file.suffix}_{self._get_next_split_index()}"
+            f"preprocessed_{self.folder}{self.data_file_suffix}_{self._get_next_split_index()}{self.data_file.suffix}"
         )
         torch.save(data, split_filename)
         print(f"Chunk dataset saved to {split_filename}")
@@ -724,7 +725,7 @@ class DatasetWrapper(Dataset):
         i = 0
         while (
             self.data_file.with_name(
-                f"preprocessed_{self.folder}{self.data_file.suffix}_{i}"
+                f"preprocessed_{self.folder}{self.data_file_suffix}_{i}{self.data_file.suffix}"
             )
         ).is_file():
             i += 1
