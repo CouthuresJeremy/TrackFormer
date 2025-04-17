@@ -560,15 +560,13 @@ class ActsDataset(IterBase):
 
     def _load_event(self, event_prefix):
         self.event = event_prefix
-        parameters = self.path / f"{event_prefix}-parameters.csv"
-        particles = self.path / f"{event_prefix}-particles.csv"
-        spacepoints = self.path / f"{event_prefix}-spacepoint.csv"
-        tracks = self.path / f"{event_prefix}-tracks.csv"
+        particles = self.path / f"{event_prefix}-particles_simulated.csv"
+        hits = self.path / f"{event_prefix}-hits.csv"
+        tracks = self.path / f"{event_prefix}-tracks_ambi.csv"
         return (
-            pd.read_csv(spacepoints),
+            pd.read_csv(hits),
             pd.read_csv(tracks),
             pd.read_csv(particles),
-            pd.read_csv(parameters),
         )
 
     def _preprocessor(self, event_files):
@@ -578,17 +576,207 @@ class ActsDataset(IterBase):
             event_files (tuple): Tuple containing the loaded event data files.
         """
 
-        spacepoints, _, particles, _ = event_files
+        hits, _, particles = event_files
 
-        # Convert to a tensor
-        xyz = torch.tensor(
-            spacepoints[["x", "y", "z"]].values, dtype=torch.float32
-        ).squeeze()
-        pt = torch.sqrt(
-            torch.tensor(particles.px.values, dtype=torch.float32) ** 2
-            + torch.tensor(particles.py.values, dtype=torch.float32) ** 2
-        ).squeeze()
-        yield xyz, torch.ones(xyz.shape[0], dtype=torch.bool), pt
+        # Get kwargs min_hits if available
+        min_hits = getattr(self, "min_hits", 5)
+        # particles = particles[particles["nhits"] >= min_hits]
+
+        n_hits = hits.shape[0]
+        merged_df = pd.merge(hits, particles, on="particle_id", validate="many_to_one")
+        # merged_df = pd.merge(merged_df, hits, on="hit_id")
+
+        # Verify that the number of hits is the same
+        if n_hits != merged_df.shape[0]:
+            raise ValueError(
+                f"Number of hits in {self.event} does not match the number of hits in the merged dataframe."
+            )
+
+        merged_df["pT"] = np.sqrt(merged_df["px"] ** 2 + merged_df["py"] ** 2)
+
+        # Get kwargs min_pt and max_pt if available
+        min_pt = getattr(self, "min_pt", 0)
+        max_pt = getattr(self, "max_pt", np.inf)
+
+        merged_df = merged_df[(merged_df["pT"] >= min_pt) & (merged_df["pT"] <= max_pt)]
+
+        # Get kwargs keep_secondaries if available
+        keep_secondaries = getattr(self, "keep_secondaries", True)
+        if not keep_secondaries:
+            secondary_selection = (np.abs(merged_df["vx"]) >= 1) | (
+                np.abs(merged_df["vy"]) >= 1
+            )
+            merged_df = merged_df[~secondary_selection]
+
+        p = np.sqrt(merged_df["px"] ** 2 + merged_df["py"] ** 2 + merged_df["pz"] ** 2)
+        merged_df["peta"] = np.arctanh(merged_df["pz"] / p)
+
+        # Get kwargs min_abs_eta and max_abs_eta if available
+        min_abs_eta = getattr(self, "min_abs_eta", 0)
+        max_abs_eta = getattr(self, "max_abs_eta", np.inf)
+
+        merged_df = merged_df[
+            (np.abs(merged_df["peta"]) >= min_abs_eta)
+            & (np.abs(merged_df["peta"]) <= max_abs_eta)
+        ]
+
+        # Get kwargs truth_position if available
+        truth_position = getattr(self, "truth_position", True)
+        if truth_position:
+            # Override reconstructed position by truth position
+            merged_df["x"] = merged_df["tx"]
+            merged_df["y"] = merged_df["ty"]
+            merged_df["z"] = merged_df["tz"]
+
+        # Get kwargs input_variables if available
+        default_inputs = ["x", "y", "z"]
+        input_variables = getattr(self, "input_variables", default_inputs)
+
+        if (
+            any([var not in merged_df.columns for var in input_variables])
+            or getattr(self, "sort_by_radius", False)
+            or getattr(self, "cut_scattered", False)
+        ):
+            # Add other coordinate system
+            merged_df["tr"] = np.sqrt(merged_df["tx"] ** 2 + merged_df["ty"] ** 2)
+            merged_df["tphi"] = np.arctan2(merged_df["ty"], merged_df["tx"])
+            merged_df["r"] = np.sqrt(merged_df["x"] ** 2 + merged_df["y"] ** 2)
+            merged_df["phi"] = np.arctan2(merged_df["y"], merged_df["x"])
+
+        # Get kwargs output_variables if available
+        output_variables = getattr(self, "output_variables", ["pT", "pz"])
+
+        if any([var not in merged_df.columns for var in output_variables]):
+            # Add other track parameters
+            merged_df["qopT"] = merged_df["q"] / merged_df["pT"]
+            merged_df["qpT"] = merged_df["q"] * merged_df["pT"]
+            merged_df["phi0"] = np.arctan2(merged_df["py"], merged_df["px"])
+            if any(
+                [
+                    var in output_variables
+                    for var in ["d0", "z0", "x_perigee", "y_perigee", "z_perigee"]
+                ]
+            ):
+                (
+                    merged_df["d0"],
+                    merged_df["z0"],
+                    (
+                        merged_df["x_perigee"],
+                        merged_df["y_perigee"],
+                        merged_df["z_perigee"],
+                    ),
+                ) = compute_impact_parameters(
+                    p_x=merged_df["px"],
+                    p_y=merged_df["py"],
+                    p_z=merged_df["pz"],
+                    q=merged_df["q"],
+                    B=2,
+                    x_v=merged_df["vx"],
+                    y_v=merged_df["vy"],
+                    z_v=merged_df["vz"],
+                    reference_point=(0, 0, 0),
+                )
+            merged_df["ptheta"] = np.arctan2(merged_df["pT"], merged_df["pz"])
+
+        grouped = merged_df.groupby("particle_id")
+
+        for _, group in grouped:
+            # Cut tracks with too few hits
+            if group.shape[0] < min_hits:
+                continue
+
+            # Cut scattered tracks
+            if getattr(self, "cut_scattered", False):
+                # This is a truth particle cut
+
+                # The track must be ordered by radius
+                if not "tr" in group:
+                    group["tr"] = np.sqrt(group["tx"] ** 2 + group["ty"] ** 2)
+                group_sorted = group.sort_values("tr")
+                # Compute the angle between the hits
+                if not "tphi" in group:
+                    group_sorted["tphi"] = np.arctan2(
+                        group_sorted["ty"], group_sorted["tx"]
+                    )
+                group_sorted["dphi"] = (
+                    group_sorted["tphi"] - group_sorted["tphi"].iloc[0]
+                )
+                # Correct for periodicity
+                group_sorted["dphi"] = np.where(
+                    group_sorted["dphi"] > np.pi,
+                    group_sorted["dphi"] - 2 * np.pi,
+                    group_sorted["dphi"],
+                )
+                group_sorted["dphi"] = np.where(
+                    group_sorted["dphi"] < -np.pi,
+                    group_sorted["dphi"] + 2 * np.pi,
+                    group_sorted["dphi"],
+                )
+                # Check if the angle is monotonically increasing
+                scattered = (
+                    (group_sorted["dphi"].shift(-1) - group_sorted["dphi"])
+                    * (group_sorted["dphi"].shift(-2) - group_sorted["dphi"].shift(-1))
+                    < 0
+                ).any()
+                if scattered:
+                    continue
+
+            # Sort by the hits by radius
+            if getattr(self, "sort_by_radius", False):
+                if not "r" in group:
+                    group["r"] = np.sqrt(group["x"] ** 2 + group["y"] ** 2)
+                group = group.sort_values("r")
+            elif getattr(self, "sort_by_dz", False):
+                # Compute the mean z of the hits
+                mean_z = group["z"].mean()
+                group["dz"] = (group["z"] - mean_z) * mean_z
+                # Sort by absolute distance to the mean z
+                # group["dz"] = np.abs(group["dz"])
+                group = group.sort_values("dz")
+            elif getattr(self, "sort_by_distance", False):
+                group["distance"] = np.sqrt(
+                    group["x"] ** 2 + group["y"] ** 2 + group["z"] ** 2
+                )
+                group = group.sort_values("distance")
+
+            # Add custom features
+            if "dphi" in input_variables:
+                # Remove phi of the first hit
+                group["dphi"] = group["phi"] - group["phi"].iloc[0]
+                # Correct for periodicity
+                group["dphi"] = np.where(
+                    group["dphi"] > np.pi, group["dphi"] - 2 * np.pi, group["dphi"]
+                )
+                group["dphi"] = np.where(
+                    group["dphi"] < -np.pi, group["dphi"] + 2 * np.pi, group["dphi"]
+                )
+
+            if (
+                "pT_circle_estimate" in input_variables
+                or "pT_circle_estimate_inv" in input_variables
+            ):
+                # Estimate pT from the circle fit
+                from src.my_model.benchmarks import CircleFit
+
+                cf = CircleFit()
+                points = group[["x", "y"]].values
+                points = torch.tensor(points, dtype=torch.float32)
+
+                # Make it a batch of 1 2D list of points
+                points = points.unsqueeze(0)
+                r = cf.fit(points).tolist()
+                pt_fit = np.array(r) * 1.0 * 2 * 299_792_458 / 1e9 / 1000
+                group["pT_circle_estimate"] = np.full(group.shape[0], pt_fit)
+                group["pT_circle_estimate_inv"] = 1 / np.full(group.shape[0], pt_fit)
+
+            inputs = group[input_variables].values
+            target = group[output_variables].values[0]
+
+            zxy = torch.tensor(inputs, dtype=torch.float32)
+            target_tensor = torch.tensor(target, dtype=torch.float32)
+
+            mask = torch.ones(zxy.shape[0], dtype=torch.bool)
+            yield zxy, mask, target_tensor
 
 
 class DatasetWrapper(Dataset):
