@@ -444,25 +444,31 @@ class TrackMLDataset(IterBase):
             merged_df["qopT"] = merged_df["q"] / merged_df["pT"]
             merged_df["qpT"] = merged_df["q"] * merged_df["pT"]
             merged_df["phi0"] = np.arctan2(merged_df["py"], merged_df["px"])
-            (
-                merged_df["d0"],
-                merged_df["z0"],
+            if any(
+                [
+                    var in output_variables
+                    for var in ["d0", "z0", "x_perigee", "y_perigee", "z_perigee"]
+                ]
+            ):
                 (
-                    merged_df["x_perigee"],
-                    merged_df["y_perigee"],
-                    merged_df["z_perigee"],
-                ),
-            ) = compute_impact_parameters(
-                p_x=merged_df["px"],
-                p_y=merged_df["py"],
-                p_z=merged_df["pz"],
-                q=merged_df["q"],
-                B=2,
-                x_v=merged_df["vx"],
-                y_v=merged_df["vy"],
-                z_v=merged_df["vz"],
-                reference_point=(0, 0, 0),
-            )
+                    merged_df["d0"],
+                    merged_df["z0"],
+                    (
+                        merged_df["x_perigee"],
+                        merged_df["y_perigee"],
+                        merged_df["z_perigee"],
+                    ),
+                ) = compute_impact_parameters(
+                    p_x=merged_df["px"],
+                    p_y=merged_df["py"],
+                    p_z=merged_df["pz"],
+                    q=merged_df["q"],
+                    B=2,
+                    x_v=merged_df["vx"],
+                    y_v=merged_df["vy"],
+                    z_v=merged_df["vz"],
+                    reference_point=(0, 0, 0),
+                )
             merged_df["ptheta"] = np.arctan2(merged_df["pT"], merged_df["pz"])
 
         grouped = merged_df.groupby("particle_id")
