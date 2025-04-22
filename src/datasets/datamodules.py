@@ -833,8 +833,8 @@ class DatasetWrapper(Dataset):
     def __setup(self):
         """Sets up the dataset by loading from preprocessed data if available, or processing and saving it."""
         # Preprocess the data if not already done
-        if not self._is_preprocessed():
-            self._preprocess_data()
+        # if not self._is_preprocessed():
+        self._preprocess_data()
 
         # Load the data from the preprocessed file
         if self.data_file.is_file():
@@ -885,8 +885,16 @@ class DatasetWrapper(Dataset):
         )
         ds = self.ds_class(self.dataset_dir, self.folder, **self.ds_class_kwargs)
         ds_loader = DataLoader(ds, num_workers=self.wrapper_workers)
+        already_preprocessed = self.split_size * self._get_next_split_index()
+        if already_preprocessed > 0:
+            console.print(
+                f"Already preprocessed {already_preprocessed} samples.",
+                style="yellow",
+            )
         chunk_data = []
         for particle_index, variables in enumerate(ds_loader):
+            if particle_index < already_preprocessed:
+                continue
             if particle_index % 1000 == 0:
                 print(f"Processing particle {particle_index}")
 
