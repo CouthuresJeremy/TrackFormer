@@ -880,17 +880,21 @@ class DatasetWrapper(Dataset):
     def _preprocess_data(self):
         """Preprocesses the dataset if not already done."""
         console.print(
-            "Preprocessed data not found. Processing and saving data...",
+            "Processing and saving data...",
             style="cyan",
         )
-        ds = self.ds_class(self.dataset_dir, self.folder, **self.ds_class_kwargs)
-        ds_loader = DataLoader(ds, num_workers=self.wrapper_workers)
         already_preprocessed = self.split_size * self._get_next_split_index()
         if already_preprocessed > 0:
             console.print(
-                f"Already preprocessed {already_preprocessed} samples.",
+                f"Already preprocessed {already_preprocessed} samples. Resuming from there...",
                 style="yellow",
             )
+        else:
+            console.print(
+                "No preprocessed data found. Starting from scratch.", style="red"
+            )
+        ds = self.ds_class(self.dataset_dir, self.folder, **self.ds_class_kwargs)
+        ds_loader = DataLoader(ds, num_workers=self.wrapper_workers)
         chunk_data = []
         for particle_index, variables in enumerate(ds_loader):
             if particle_index < already_preprocessed:
