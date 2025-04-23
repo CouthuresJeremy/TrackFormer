@@ -552,6 +552,24 @@ class TrackMLDataset(IterBase):
                 group["pT_circle_estimate"] = np.full(group.shape[0], pt_fit)
                 group["pT_circle_estimate_inv"] = 1 / np.full(group.shape[0], pt_fit)
 
+            # Get kwargs z_symmetry if available
+            z_symmetry = getattr(self, "z_symmetry", False)
+            if z_symmetry:
+                # Get the sign of the z coordinate of the first hit
+                z_sign = np.sign(group["z"].iloc[0])
+                # Multiply the z coordinate by the sign
+                group["z"] = group["z"] * z_sign
+                group["tz"] = group["tz"] * z_sign
+                # Multiply track parameters depending on z by the sign
+                if "z0" in output_variables:
+                    group["z0"] = group["z0"] * z_sign
+                if "z_perigee" in output_variables:
+                    group["z_perigee"] = group["z_perigee"] * z_sign
+                group["pz"] = group["pz"] * z_sign
+                group["qopT"] = group["qopT"] * z_sign
+                group["qpT"] = group["qpT"] * z_sign
+                group["q"] = group["q"] * z_sign
+
             inputs = group[input_variables].values
             target = group[output_variables].values[0]
 
