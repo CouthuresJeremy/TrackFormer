@@ -144,6 +144,12 @@ class IterBase(IterableDataset, ABC):
 
         event_numbers = []
         for file in self.path.glob("*"):
+            # Keep only files
+            if not file.is_file():
+                continue
+            # Keep only files with the prefix "event"
+            if not file.stem.startswith("event"):
+                continue
             event_numbers.append(file.stem.split("-")[0])
 
         if not event_numbers:
