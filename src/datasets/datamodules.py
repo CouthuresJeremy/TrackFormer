@@ -356,7 +356,8 @@ class TrackMLDataset(IterBase):
         particles = get_file_path(f"{event_prefix}-particles")
         cells = get_file_path(f"{event_prefix}-cells")
         truth = get_file_path(f"{event_prefix}-truth")
-        # print(f"Loading event {event_prefix}")
+        if getattr(self, "verbose", False):
+            print(f"Loading event {event_prefix}")
 
         # Handle empty csv files
         hits_df = pd.read_csv(hits) if hits.stat().st_size > 0 else pd.DataFrame()
@@ -587,6 +588,8 @@ class ActsDataset(IterBase):
         particles = self.path / f"{event_prefix}-particles_simulated.csv"
         hits = self.path / f"{event_prefix}-hits.csv"
         tracks = self.path / f"{event_prefix}-tracks_ambi.csv"
+        if getattr(self, "verbose", False):
+            print(f"Loading event {event_prefix}")
         return (
             pd.read_csv(hits),
             pd.read_csv(tracks),
@@ -1047,6 +1050,7 @@ class DataModule(L.LightningDataModule):
             folder=folder,
             dataset=self.hparams.dataset_type,
             **self.dataset_class_kwargs,
+            verbose=folder in ("train", "val"),
         )
 
     @staticmethod
