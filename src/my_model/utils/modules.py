@@ -339,7 +339,13 @@ class BaseModel(L.LightningModule):
             logger=False,
             batch_size=inputs.shape[0],
         )
-        self.logger.experiment.add_scalars("loss", {mode: loss}, self.global_step)
+        # Access to log_every_n_steps
+        log_every_n_steps = self.trainer.log_every_n_steps
+
+        if self.logger and self.global_step % log_every_n_steps == 0:
+            # Log loss to TensorBoard
+            self.logger.experiment.add_scalars("loss", {mode: loss}, self.global_step)
+
         # Early return
         if self.metric is None:
             return loss
@@ -353,9 +359,12 @@ class BaseModel(L.LightningModule):
             logger=False,
             batch_size=inputs.shape[0],
         )
-        self.logger.experiment.add_scalars(
-            f"{self.metric.mode}_metric", {mode: metric}, self.global_step
-        )
+
+        if self.logger and self.global_step % log_every_n_steps == 0:
+            # Log metric to TensorBoard
+            self.logger.experiment.add_scalars(
+                f"{self.metric.mode}_metric", {mode: metric}, self.global_step
+            )
         return loss
 
     def training_step(self, batch, batch_idx):
