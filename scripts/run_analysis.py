@@ -268,11 +268,19 @@ def run_inference(dataset_wrapper, models):
     for model in models:
         models[model]["data_list"] = []
 
+    # Get available device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
     print("Running inference...")
     with torch.no_grad():
         for i, (input, mask, target) in enumerate(tqdm(tl)):
+            # Move data to device
+            input = input.to(device)
+            mask = mask.to(device)
+            target = target.to(device)
             # Transformers
-            p_true = target
+            p_true = target.cpu().numpy()
             p_true_list.extend(p_true.tolist())
             n_hits_list.extend(mask.sum(dim=1).tolist())
 
@@ -281,6 +289,11 @@ def run_inference(dataset_wrapper, models):
                 p_pred_model = ml_model(input, mask=mask)
                 models[model]["data_list"].extend(p_pred_model.tolist())
 
+                # Move data to CPU for further processing
+                p_pred_model = p_pred_model.cpu().numpy()
+                input = input.cpu().numpy()
+                mask = mask.cpu().numpy()
+                # Calculate relative error
                 error_model = p_pred_model - p_true
                 relative_error_model = error_model / p_true
                 abs_relative_error_model = np.abs(relative_error_model)
