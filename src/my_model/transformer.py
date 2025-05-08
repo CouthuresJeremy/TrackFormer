@@ -1,8 +1,10 @@
 import lightning as L
+from lightning.pytorch.cli import SaveConfigCallback
 from torch import nn, optim
 from src.my_model.utils.modules import TransformerEncoder, BaseModel
 import torch
 import math
+import yaml
 
 
 class PositionalEncoding(nn.Module):
@@ -129,3 +131,19 @@ class TrackFormer(BaseModel):
             x = self.positional_encoding(x)
         attention_maps = self.transformer.get_attention_maps(x)
         return attention_maps
+
+    def on_save_checkpoint(self, checkpoint: dict) -> None:
+        # Find the SaveConfigCallback instance
+        cfg_cb = next(
+            (c for c in self.trainer.callbacks if isinstance(c, SaveConfigCallback)),
+            None,
+        )
+        if cfg_cb is None:
+            self.print("[warning] no SaveConfigCallback, config not saved")
+            return
+
+        # Use the SaveConfigCallback parser to dump the in-memory config to YAML
+        yaml_str = cfg_cb.parser.dump(cfg_cb.config, skip_none=False)
+
+        # Parse the YAML back into a dict and embed
+        checkpoint["config"] = yaml.safe_load(yaml_str)
