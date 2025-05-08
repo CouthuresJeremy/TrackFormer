@@ -11,6 +11,7 @@ import plotly.graph_objects as go
 from scipy.stats import norm, scoreatpercentile
 from scipy.optimize import curve_fit
 from typing import Dict, List, Tuple, Any
+from matplotlib.colors import LogNorm
 
 from src.analysis.utils import var_to_pT, compute_track_resolution, compute_likelyhood
 
@@ -344,6 +345,101 @@ def plot_pi_true_vs_pred(
         if show:
             plt.show()
         plt.close()
+
+
+def plot_binned_confusion_matrix(
+    target_labels,
+    p_true_list,
+    models,
+    config,
+    title_suffix,
+    output_dir,
+    variable_filenames,
+    bins=50,
+    log_density=True,
+    low_pt=False,
+    show=True,
+    save=True,
+):
+    """
+    For each variable and each model, make a binned 2D histogram of true vs predicted,
+    colored by density.
+
+    Parameters
+    ----------
+    bins : int or [int, int]
+        Number of bins in x and y (or separate [xbins, ybins]).
+    log_density : bool
+        If True, color-scale is logarithmic.
+    low_pt : bool
+        If True, only low pT tracks are considered (pT < 10 GeV).
+    """
+    for var_index, var in enumerate(target_labels):
+        # get arrays of true/pred and predictions per model
+        pi_true_values, model_predictions, _ = prepare_data(
+            p_true_list, models, config, var_index, var, low_pt
+        )
+
+        title = ""
+        if low_pt:
+            title += "($p_T$ < 10 GeV)"
+        title += title_suffix
+
+        xlabel = f"${var}^{{true}}$" + (" [GeV]" if var.startswith("p") else "")
+        ylabel = f"${var}^{{pred}}$" + (" [GeV]" if var.startswith("p") else "")
+
+        filename = output_dir / f"{variable_filenames[var]}_binned_confusion_matrix.png"
+        if low_pt:
+            filename = filename.with_name(filename.stem + "_low_pt" + filename.suffix)
+
+        # set up figure with one subplot per model
+        fig, _ = plt.subplots(
+            1, len(models), figsize=(8 * len(models), 6), sharex=True, sharey=True
+        )
+        fig.suptitle(title, fontsize=16)
+
+        # overall range to make x=y line extend full span
+        vmin = min(pi_true_values)
+        vmax = max(pi_true_values)
+
+        # optional pt < 10 GeV limit
+        if var == "p_T" and config["output_variables"][var_index] == "qopT":
+            vmin = 0
+            vmax = 10
+
+        for model_index, (model_name, model_info) in enumerate(models.items(), start=1):
+            pi_pred_values = model_predictions[model_name]
+
+            plt.subplot(1, len(models), model_index)
+
+            # x=y reference line
+            plt.plot([vmin, vmax], [vmin, vmax], "--", color="black")
+
+            # 2D histogram
+            plt.hist2d(
+                pi_true_values,
+                pi_pred_values,
+                bins=bins,
+                range=[[vmin, vmax], [vmin, vmax]],
+                cmap="viridis",
+                norm=LogNorm() if log_density else None,
+                cmin=1,
+            )
+            # colorbar per subplot
+            plt.colorbar(label="Number of particles", orientation="vertical")
+
+            plt.xlabel(xlabel, fontsize=12)
+            plt.ylabel(ylabel, fontsize=12)
+            plt.grid(True, linestyle="--", alpha=0.5)
+
+            # ensure square aspect so bins are squares
+            plt.gca().set_aspect("equal", "box")
+
+        if save:
+            fig.savefig(filename, bbox_inches="tight", dpi=150)
+        if show:
+            plt.show()
+        plt.close(fig)
 
 
 def plot_pi_error_distributions(
