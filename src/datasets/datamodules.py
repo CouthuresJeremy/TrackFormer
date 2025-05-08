@@ -556,20 +556,24 @@ class TrackMLDataset(IterBase):
             # Get kwargs z_symmetry if available
             z_symmetry = getattr(self, "z_symmetry", False)
             if z_symmetry:
-                # Get the sign of the z coordinate of the first hit
-                z_sign = np.sign(group["z"].iloc[0])
+                # Compute the dz of the hits
+                group["dz"] = group["z"] - group["z"].iloc[0]
+                # Get the mean dz of the first 3 hits
+                mean_dz = group["dz"].iloc[:3].mean()
+                # Get the sign of the mean dz
+                z_sign = np.sign(mean_dz)
                 # Multiply the z coordinate by the sign
                 group["z"] = group["z"] * z_sign
                 group["tz"] = group["tz"] * z_sign
+                group["dz"] = group["dz"] * z_sign
                 # Multiply track parameters depending on z by the sign
                 if "z0" in output_variables:
                     group["z0"] = group["z0"] * z_sign
                 if "z_perigee" in output_variables:
                     group["z_perigee"] = group["z_perigee"] * z_sign
                 group["pz"] = group["pz"] * z_sign
-                group["qopT"] = group["qopT"] * z_sign
-                group["qpT"] = group["qpT"] * z_sign
-                group["q"] = group["q"] * z_sign
+                group["peta"] = group["peta"] * z_sign
+                group["ptheta"] = np.arctan2(group["pT"], group["pz"])
 
             inputs = group[input_variables].values
             target = group[output_variables].values[0]
