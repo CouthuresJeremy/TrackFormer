@@ -155,6 +155,33 @@ def generate_low_pt_mask(p_true_list, config):
     return mask
 
 
+def generate_eta_range_mask(p_true_list, config, eta_range=None):
+    # Create mask for eta range
+    if eta_range is None:
+        return np.ones(len(p_true_list), dtype=bool)
+    # Get pT and pz
+    assert any(v in config["output_variables"] for v in ["pT", "qopT", "qpT"])
+    if "pT" in config["output_variables"]:
+        pt_true = np.array(p_true_list)[:, config["output_variables"].index("pT")]
+    elif "qopT" in config["output_variables"]:
+        qopt_true = np.array(p_true_list)[:, config["output_variables"].index("qopT")]
+        pt_true = 1 / np.abs(qopt_true)
+    elif "qpT" in config["output_variables"]:
+        qpt_true = np.array(p_true_list)[:, config["output_variables"].index("qpT")]
+        pt_true = np.abs(qpt_true)
+
+    # Get pz
+    assert "pz" in config["output_variables"]
+    pz_true = np.array(p_true_list)[:, config["output_variables"].index("pz")]
+    # Calculate eta
+    p_true = np.sqrt(pt_true**2 + pz_true**2)
+    eta_true = np.arctanh(pz_true / p_true)
+
+    # Select only events with eta in the range
+    mask = (eta_true >= eta_range[0]) & (eta_true < eta_range[1])
+    return mask
+
+
 def plot_err_vs_n_hits(
     target_labels,
     p_true_list,
@@ -860,6 +887,7 @@ def plot_pi_relative_error_distributions_low_pt_1_2(
     output_dir,
     variable_filenames,
     # variable_labels,
+    eta_range=None,
     show=True,
     save=True,
 ):
@@ -873,8 +901,10 @@ def plot_pi_relative_error_distributions_low_pt_1_2(
     from scipy.optimize import curve_fit
 
     for var_index, var in enumerate(target_labels):
-        title = f"Relative Error Distributions for ${var}$ (1 GeV < $p_T$ < 2 GeV)"
-        title += title_suffix
+        title = f"(1 GeV < $p_T$ < 2 GeV)"
+        if eta_range is not None:
+            title += f" (${eta_range[0]} \\leq \\eta < {eta_range[1]}$)"
+        title += "\n" + title_suffix
 
         true_label = f"${var}^{{true}}$"
         pred_label = f"${var}^{{pred}}$"
@@ -883,6 +913,8 @@ def plot_pi_relative_error_distributions_low_pt_1_2(
         filename = (
             f"relative_error_distributions_{variable_filenames[var]}_low_pt_1_2.png"
         )
+        if eta_range is not None:
+            filename = filename.replace(".", f"_eta_{eta_range[0]}_{eta_range[1]}.")
         filename = output_dir / filename
 
         # Get the transverse momentum values
@@ -893,6 +925,13 @@ def plot_pi_relative_error_distributions_low_pt_1_2(
 
         # Apply the pT mask: only select events with 1 < p_T < 2 GeV
         mask = (pt_true > 1) & (pt_true < 2)
+
+        if eta_range is not None:
+            # Get the eta mask
+            mask_eta = generate_eta_range_mask(
+                p_true_list=p_true_list, config=config, eta_range=eta_range
+            )
+            mask = mask & mask_eta
 
         # Get the true values for the current variable
         pi_true_values = np.array(p_true_list)[:, var_index]
