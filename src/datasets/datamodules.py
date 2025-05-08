@@ -581,6 +581,30 @@ class TrackMLDataset(IterBase):
             yield zxy, mask, target_tensor
 
 
+def combine_segments(segments: list[int]) -> int:
+    """
+    Pack segments into a 64-bit integer using big-endian bit-fields,
+    then mask to 64 bits.
+    """
+    # Bit widths from MultiIndex<std::uint64_t, 12, 12, 16, 8, 16>
+    BIT_WIDTHS = [12, 12, 16, 8, 16]
+    full_mask = (1 << 64) - 1
+    val = 0
+    for seg, width in zip(segments, BIT_WIDTHS):
+        if seg < 0 or seg >= (1 << width):
+            raise ValueError(f"Segment {seg} out of {width}-bit range")
+        val = (val << width) | seg
+    return val & full_mask
+
+
+def parse_particle_id(s: str) -> int:
+    """
+    Convert a pipe-separated string 'a|b|c|d|e' into a uint64.
+    """
+    parts = [int(p) for p in s.strip().split("|") if p]
+    return combine_segments(parts)
+
+
 class ActsDataset(IterBase):
 
     def _load_event(self, event_prefix):
@@ -603,10 +627,47 @@ class ActsDataset(IterBase):
             event_files (tuple): Tuple containing the loaded event data files.
         """
 
-        hits, _, particles = event_files
+        hits, tracks, particles = event_files
+
+        # Add Hit_ID to the hits dataframe (index)
+        hits["hit_id"] = hits.index
+
+        # Convert particle_id to 64-bit unsigned int
+        tracks["particle_id"] = tracks["particleId"].apply(parse_particle_id)
+        del tracks["particleId"]
+        # Verify that the particle_id is in the particles dataframe
+        if not tracks["particle_id"].isin(particles["particle_id"]).all():
+            raise ValueError(
+                f"Particle id {len(tracks['particle_id'][~tracks['particle_id'].isin(particles['particle_id'])])} not in particles dataframe"
+            )
 
         truth_tracks = getattr(self, "truth_tracks", True)
         track_index = "particle_id"
+        if not truth_tracks:
+            track_index = "track_id"
+            # Extract the hits from the tracks
+            # Convert "[5747,7769,13699,]" to [5747, 7769, 13699]
+            # Remove the brackets and split by comma
+            tracks["Hits_ID"] = tracks["Hits_ID"].str.strip("[]").str.split(",")
+            # Convert to int
+            tracks["Hits_ID"] = tracks["Hits_ID"].apply(
+                lambda x: [int(i) for i in x if i]
+            )
+            # Explode the dataframe
+            tracks = tracks.explode("Hits_ID")
+            # Keep only Hits_ID, particle_id and track_id
+            tracks = tracks[["Hits_ID", "particle_id", "track_id"]]
+            # Rename Hits_ID to hit_id
+            tracks.rename(columns={"Hits_ID": "hit_id"}, inplace=True)
+
+            # Merge with hits dataframe
+            hits = pd.merge(
+                hits,
+                tracks,
+                on=["hit_id", "particle_id"],
+                validate="one_to_one",
+            )
+
         particle_types = getattr(self, "particle_types", None)
         if particle_types is not None:
             # Filter particles based on the specified particle types
