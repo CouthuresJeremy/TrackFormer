@@ -605,6 +605,9 @@ class ActsDataset(IterBase):
 
         hits, _, particles = event_files
 
+        truth_tracks = getattr(self, "truth_tracks", True)
+        track_index = "particle_id"
+
         # Get kwargs min_hits if available
         min_hits = getattr(self, "min_hits", 5)
         # particles = particles[particles["nhits"] >= min_hits]
@@ -705,7 +708,7 @@ class ActsDataset(IterBase):
                 )
             merged_df["ptheta"] = np.arctan2(merged_df["pT"], merged_df["pz"])
 
-        grouped = merged_df.groupby("particle_id")
+        grouped = merged_df.groupby(track_index)
 
         for _, group in grouped:
             # Cut tracks with too few hits
