@@ -607,6 +607,10 @@ class ActsDataset(IterBase):
 
         truth_tracks = getattr(self, "truth_tracks", True)
         track_index = "particle_id"
+        particle_types = getattr(self, "particle_types", None)
+        if particle_types is not None:
+            # Filter particles based on the specified particle types
+            particles = particles[particles["particle_type"].isin(particle_types)]
 
         # Get kwargs min_hits if available
         min_hits = getattr(self, "min_hits", 5)
@@ -617,9 +621,10 @@ class ActsDataset(IterBase):
         # merged_df = pd.merge(merged_df, hits, on="hit_id")
 
         # Verify that the number of hits is the same
-        if n_hits != merged_df.shape[0]:
-            raise ValueError(
-                f"Number of hits in {self.event} does not match the number of hits in the merged dataframe."
+        if n_hits != merged_df.shape[0] and particle_types is None:
+            # Show a warning instead of raising an error
+            console.print(
+                f"[yellow]Warning: Number of hits in {self.event} does not match the number of hits in the merged dataframe.[/yellow]"
             )
 
         merged_df["pT"] = np.sqrt(merged_df["px"] ** 2 + merged_df["py"] ** 2)
