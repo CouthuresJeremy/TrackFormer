@@ -585,7 +585,7 @@ class ActsDataset(IterBase):
 
     def _load_event(self, event_prefix):
         self.event = event_prefix
-        particles = self.path / f"{event_prefix}-particles_simulated.csv"
+        particles = self.path / f"{event_prefix}-particles_hits.csv"
         hits = self.path / f"{event_prefix}-hits.csv"
         tracks = self.path / f"{event_prefix}-tracks_ambi.csv"
         if getattr(self, "verbose", False):
