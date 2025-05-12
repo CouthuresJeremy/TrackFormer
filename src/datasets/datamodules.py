@@ -383,42 +383,16 @@ class TrackMLDataset(IterBase):
         )
 
     def _preprocessor(self, eventfiles):
-        # Get kwargs min_hits if available
-        min_hits = getattr(self, "min_hits", 5)
+        # Get kwargs output_variables if available
+        self.output_variables = getattr(self, "output_variables", ["pT", "pz"])
 
         hits, _, particles, truth = eventfiles
-        particles = particles[particles["nhits"] >= min_hits]
+        # Preprocess the particles dataframe
+        particles = self._preprocess_particles(particles)
 
+        # Merge the dataframes
         merged_df = pd.merge(truth, particles, on="particle_id")
         merged_df = pd.merge(merged_df, hits, on="hit_id")
-
-        merged_df["pT"] = np.sqrt(merged_df["px"] ** 2 + merged_df["py"] ** 2)
-
-        # Get kwargs min_pt and max_pt if available
-        min_pt = getattr(self, "min_pt", 0)
-        max_pt = getattr(self, "max_pt", np.inf)
-
-        merged_df = merged_df[(merged_df["pT"] >= min_pt) & (merged_df["pT"] <= max_pt)]
-
-        # Get kwargs keep_secondaries if available
-        keep_secondaries = getattr(self, "keep_secondaries", True)
-        if not keep_secondaries:
-            secondary_selection = (np.abs(merged_df["vx"]) >= 1) | (
-                np.abs(merged_df["vy"]) >= 1
-            )
-            merged_df = merged_df[~secondary_selection]
-
-        p = np.sqrt(merged_df["px"] ** 2 + merged_df["py"] ** 2 + merged_df["pz"] ** 2)
-        merged_df["peta"] = np.arctanh(merged_df["pz"] / p)
-
-        # Get kwargs min_abs_eta and max_abs_eta if available
-        min_abs_eta = getattr(self, "min_abs_eta", 0)
-        max_abs_eta = getattr(self, "max_abs_eta", np.inf)
-
-        merged_df = merged_df[
-            (np.abs(merged_df["peta"]) >= min_abs_eta)
-            & (np.abs(merged_df["peta"]) <= max_abs_eta)
-        ]
 
         # Get kwargs truth_position if available
         truth_position = getattr(self, "truth_position", True)
@@ -442,41 +416,6 @@ class TrackMLDataset(IterBase):
             merged_df["tphi"] = np.arctan2(merged_df["ty"], merged_df["tx"])
             merged_df["r"] = np.sqrt(merged_df["x"] ** 2 + merged_df["y"] ** 2)
             merged_df["phi"] = np.arctan2(merged_df["y"], merged_df["x"])
-
-        # Get kwargs output_variables if available
-        output_variables = getattr(self, "output_variables", ["pT", "pz"])
-
-        if any([var not in merged_df.columns for var in output_variables]):
-            # Add other track parameters
-            merged_df["qopT"] = merged_df["q"] / merged_df["pT"]
-            merged_df["qpT"] = merged_df["q"] * merged_df["pT"]
-            merged_df["phi0"] = np.arctan2(merged_df["py"], merged_df["px"])
-            if any(
-                [
-                    var in output_variables
-                    for var in ["d0", "z0", "x_perigee", "y_perigee", "z_perigee"]
-                ]
-            ):
-                (
-                    merged_df["d0"],
-                    merged_df["z0"],
-                    (
-                        merged_df["x_perigee"],
-                        merged_df["y_perigee"],
-                        merged_df["z_perigee"],
-                    ),
-                ) = compute_impact_parameters(
-                    p_x=merged_df["px"],
-                    p_y=merged_df["py"],
-                    p_z=merged_df["pz"],
-                    q=merged_df["q"],
-                    B=2,
-                    x_v=merged_df["vx"],
-                    y_v=merged_df["vy"],
-                    z_v=merged_df["vz"],
-                    reference_point=(0, 0, 0),
-                )
-            merged_df["ptheta"] = np.arctan2(merged_df["pT"], merged_df["pz"])
 
         grouped = merged_df.groupby("particle_id")
 
@@ -567,22 +506,90 @@ class TrackMLDataset(IterBase):
                 group["tz"] = group["tz"] * z_sign
                 group["dz"] = group["dz"] * z_sign
                 # Multiply track parameters depending on z by the sign
-                if "z0" in output_variables:
+                if "z0" in self.output_variables:
                     group["z0"] = group["z0"] * z_sign
-                if "z_perigee" in output_variables:
+                if "z_perigee" in self.output_variables:
                     group["z_perigee"] = group["z_perigee"] * z_sign
                 group["pz"] = group["pz"] * z_sign
                 group["peta"] = group["peta"] * z_sign
                 group["ptheta"] = np.arctan2(group["pT"], group["pz"])
 
             inputs = group[input_variables].values
-            target = group[output_variables].values[0]
+            target = group[self.output_variables].values[0]
 
             zxy = torch.tensor(inputs, dtype=torch.float32)
             target_tensor = torch.tensor(target, dtype=torch.float32)
 
             mask = torch.ones(zxy.shape[0], dtype=torch.bool)
             yield zxy, mask, target_tensor
+
+    def _preprocess_particles(self, particles):
+        # Preprocess the particles dataframe
+        particles["pT"] = np.sqrt(particles["px"] ** 2 + particles["py"] ** 2)
+
+        p = np.sqrt(particles["px"] ** 2 + particles["py"] ** 2 + particles["pz"] ** 2)
+        particles["peta"] = np.arctanh(particles["pz"] / p)
+
+        if any([var not in particles.columns for var in self.output_variables]):
+            # Add other track parameters
+            particles["qopT"] = particles["q"] / particles["pT"]
+            particles["qpT"] = particles["q"] * particles["pT"]
+            particles["phi0"] = np.arctan2(particles["py"], particles["px"])
+            if any(
+                [
+                    var in self.output_variables
+                    for var in ["d0", "z0", "x_perigee", "y_perigee", "z_perigee"]
+                ]
+            ):
+                (
+                    particles["d0"],
+                    particles["z0"],
+                    (
+                        particles["x_perigee"],
+                        particles["y_perigee"],
+                        particles["z_perigee"],
+                    ),
+                ) = compute_impact_parameters(
+                    p_x=particles["px"],
+                    p_y=particles["py"],
+                    p_z=particles["pz"],
+                    q=particles["q"],
+                    B=2,
+                    x_v=particles["vx"],
+                    y_v=particles["vy"],
+                    z_v=particles["vz"],
+                    reference_point=(0, 0, 0),
+                )
+            particles["ptheta"] = np.arctan2(particles["pT"], particles["pz"])
+
+        # Get kwargs min_hits if available
+        min_hits = getattr(self, "min_hits", 5)
+        particles = particles[particles["nhits"] >= min_hits]
+
+        # Get kwargs min_pt and max_pt if available
+        min_pt = getattr(self, "min_pt", 0)
+        max_pt = getattr(self, "max_pt", np.inf)
+
+        particles = particles[(particles["pT"] >= min_pt) & (particles["pT"] <= max_pt)]
+
+        # Get kwargs keep_secondaries if available
+        keep_secondaries = getattr(self, "keep_secondaries", True)
+        if not keep_secondaries:
+            secondary_selection = (np.abs(particles["vx"]) >= 1) | (
+                np.abs(particles["vy"]) >= 1
+            )
+            particles = particles[~secondary_selection]
+
+        # Get kwargs min_abs_eta and max_abs_eta if available
+        min_abs_eta = getattr(self, "min_abs_eta", 0)
+        max_abs_eta = getattr(self, "max_abs_eta", np.inf)
+
+        particles = particles[
+            (np.abs(particles["peta"]) >= min_abs_eta)
+            & (np.abs(particles["peta"]) <= max_abs_eta)
+        ]
+
+        return particles
 
 
 def combine_segments(segments: list[int]) -> int:
