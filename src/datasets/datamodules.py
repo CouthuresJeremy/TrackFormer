@@ -340,6 +340,34 @@ def compute_impact_parameters(
     return d0, z0, (x_perigee, y_perigee, z_perigee)
 
 
+def apply_z_symmetry(hits):
+    """
+    Apply z symmetry to the hits.
+    The z coordinate is multiplied by the sign of the mean dz of the first 3 hits.
+    The dz is the difference between the z coordinate and the z coordinate of the first hit.
+    """
+    # Compute the dz of the hits
+    hits["dz"] = hits["z"] - hits["z"].iloc[0]
+    # Get the mean dz of the first 3 hits
+    mean_dz = hits["dz"].iloc[:3].mean()
+    # Get the sign of the mean dz
+    z_sign = np.sign(mean_dz)
+    # Multiply the z coordinate by the sign
+    hits["z"] = hits["z"] * z_sign
+    hits["tz"] = hits["tz"] * z_sign
+    hits["dz"] = hits["dz"] * z_sign
+    # Multiply track parameters depending on z by the sign
+    if "z0" in hits.columns:
+        hits["z0"] = hits["z0"] * z_sign
+    if "z_perigee" in hits.columns:
+        hits["z_perigee"] = hits["z_perigee"] * z_sign
+    hits["pz"] = hits["pz"] * z_sign
+    hits["peta"] = hits["peta"] * z_sign
+    hits["ptheta"] = np.arctan2(hits["pT"], hits["pz"])
+
+    return hits
+
+
 class TrackMLDataset(IterBase):
     """Iterable class for TrackML"""
 
@@ -495,24 +523,7 @@ class TrackMLDataset(IterBase):
             # Get kwargs z_symmetry if available
             z_symmetry = getattr(self, "z_symmetry", False)
             if z_symmetry:
-                # Compute the dz of the hits
-                group["dz"] = group["z"] - group["z"].iloc[0]
-                # Get the mean dz of the first 3 hits
-                mean_dz = group["dz"].iloc[:3].mean()
-                # Get the sign of the mean dz
-                z_sign = np.sign(mean_dz)
-                # Multiply the z coordinate by the sign
-                group["z"] = group["z"] * z_sign
-                group["tz"] = group["tz"] * z_sign
-                group["dz"] = group["dz"] * z_sign
-                # Multiply track parameters depending on z by the sign
-                if "z0" in self.output_variables:
-                    group["z0"] = group["z0"] * z_sign
-                if "z_perigee" in self.output_variables:
-                    group["z_perigee"] = group["z_perigee"] * z_sign
-                group["pz"] = group["pz"] * z_sign
-                group["peta"] = group["peta"] * z_sign
-                group["ptheta"] = np.arctan2(group["pT"], group["pz"])
+                group = apply_z_symmetry(group)
 
             inputs = group[input_variables].values
             target = group[self.output_variables].values[0]
@@ -875,6 +886,11 @@ class ActsDataset(IterBase):
                 pt_fit = np.array(r) * 1.0 * 2 * 299_792_458 / 1e9 / 1000
                 group["pT_circle_estimate"] = np.full(group.shape[0], pt_fit)
                 group["pT_circle_estimate_inv"] = 1 / np.full(group.shape[0], pt_fit)
+
+            # Get kwargs z_symmetry if available
+            z_symmetry = getattr(self, "z_symmetry", False)
+            if z_symmetry:
+                group = apply_z_symmetry(group)
 
             inputs = group[input_variables].values
             target = group[output_variables].values[0]
