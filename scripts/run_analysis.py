@@ -38,7 +38,7 @@ from src.analysis.visualization import (
     # view_trajectory,
     # sync_plot_limits,
     plot_err_vs_n_hits,
-    plot_pi_true_vs_pred,
+    plot_binned_confusion_matrix,
     plot_pi_error_distributions,
     plot_pi_rel_resolutions,
     plot_2d_histogram,
@@ -439,7 +439,7 @@ def generate_plots(
                     show=show,
                 )
             elif plot_type == "true_vs_pred":
-                plot_pi_true_vs_pred(
+                plot_binned_confusion_matrix(
                     target_labels=target_labels,
                     p_true_list=p_true_list,
                     models=models,
@@ -451,7 +451,7 @@ def generate_plots(
                 )
 
                 # Also generate low pT version
-                plot_pi_true_vs_pred(
+                plot_binned_confusion_matrix(
                     target_labels=target_labels,
                     p_true_list=p_true_list,
                     models=models,
