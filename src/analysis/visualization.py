@@ -1042,7 +1042,8 @@ def plot_pi_relative_error_distributions_low_pt_1_2(
         title = f"(1 GeV < $p_T$ < 2 GeV)"
         if eta_range is not None:
             title += f" (${eta_range[0]} \\leq \\eta < {eta_range[1]}$)"
-        title += "\n" + title_suffix
+        if title_suffix:
+            title += "\n" + title_suffix
 
         true_label = f"${var}^{{true}}$"
         pred_label = f"${var}^{{pred}}$"
@@ -1127,8 +1128,8 @@ def plot_pi_relative_error_distributions_low_pt_1_2(
             q_high = min(q_high, n_sig * model_std + model_mean)
 
             if var == "p_z":
-                q_low = max(-2, q_low)
-                q_high = min(2, q_high)
+                q_low = max(-0.3, q_low)
+                q_high = min(0.3, q_high)
 
             n_bins = 100
 
@@ -1245,21 +1246,23 @@ def plot_pi_relative_error_distributions_low_pt_1_2(
             p_curve_fit = norm.pdf(x, model_mean, model_std)
             p_root_fit = norm.pdf(x, model_root_mean, model_root_std)
 
-            plt.plot(
-                x,
-                p_curve_fit,
-                "r",
-                linewidth=2,
-                linestyle="--",
-                label=f"Curve Fit Gaussian\nMean: {model_mean:5.3f} +/- {model_mean_err:5.3f}, Std: {model_std:5.3f} +/- {model_std_err:5.3f}",
-            )
+            # plt.plot(
+            #     x,
+            #     p_curve_fit,
+            #     "r",
+            #     linewidth=2,
+            #     linestyle="--",
+            #     label=f"Curve Fit Gaussian\nMean: {model_mean:5.3f} +/- {model_mean_err:5.3f}, Std: {model_std:5.3f} +/- {model_std_err:5.3f}",
+            # )
             plt.plot(
                 x,
                 p_root_fit,
                 "g",
                 linewidth=2,
                 linestyle="--",
-                label=f"ROOT Fit Gaussian\nMean: {model_root_mean:5.3f} +/- {model_root_mean_err:5.3f}, Std: {model_root_std:5.3f} +/- {model_root_std_err:5.3f}",
+                label="ROOT Fit Gaussian"
+                + f"\nMean: {model_root_mean:5.3f} $\\pm$ {model_root_mean_err:5.3f}"
+                + f"\nStd: {model_root_std:5.3f} $\\pm$ {model_root_std_err:5.3f}",
             )
 
             plt.xlabel(xlabel, fontsize=12)
