@@ -457,7 +457,7 @@ def generate_plots(
                     variable_filenames=variable_filenames,
                     low_pt=False,
                     show=show,
-                    publication=publication,
+                    publication=False,
                 )
             elif plot_type == "true_vs_pred":
                 plot_binned_confusion_matrix(
@@ -496,7 +496,7 @@ def generate_plots(
                     output_dir=output_dir,
                     variable_filenames=variable_filenames,
                     show=show,
-                    publication=publication,
+                    publication=False,
                 )
 
             elif plot_type == "rel_resolutions":
