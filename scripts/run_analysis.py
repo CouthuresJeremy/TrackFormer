@@ -628,6 +628,22 @@ def generate_plots(
                     publication=publication,
                 )
 
+                # Get the maximum eta from the configuration
+                max_abs_eta = config["max_abs_eta"]
+                for min_eta in range(0, int(max_abs_eta) - 1):
+                    plot_pi_relative_error_distributions_low_pt_1_2(
+                        target_labels=target_labels,
+                        p_true_list=p_true_list,
+                        models=models,
+                        config=config,
+                        title_suffix=title_suffix,
+                        output_dir=output_dir,
+                        variable_filenames=variable_filenames,
+                        low_pt=True,
+                        eta_range=(min_eta, min_eta + 1),
+                        show=show,
+                        publication=publication,
+                    )
             else:
                 print(f"Warning: Unknown plot type '{plot_type}'")
 
