@@ -160,12 +160,12 @@ def setup_variable_mappings():
     """Set up variable mappings for labels and units"""
     # Variable label mappings
     variable_labels = {
-        "tx": "tx",
-        "ty": "ty",
-        "tz": "tz",
-        "tr": "tr",
-        "tphi": r"t\varphi",
-        "dphi": r"d\varphi",
+        "tx": r"x_{truth}",
+        "ty": r"y_{truth}",
+        "tz": r"z_{truth}",
+        "tr": r"r_{truth}",
+        "tphi": r"\varphi_{truth}",
+        "dphi": r"\Delta\varphi",
         "pT": "p_T",
         "qopT": "q/p_T",
         "qpT": "q*p_T",
