@@ -183,6 +183,15 @@ def generate_eta_range_mask(p_true_list, config, eta_range=None):
     return mask
 
 
+def publication_save(filename):
+    # Save the figure in publication format
+    plt.savefig(filename, format="png", bbox_inches="tight")
+    filename_pub = filename.with_suffix(".pdf")
+    plt.savefig(filename_pub, format="pdf", bbox_inches="tight")
+    filename_pub = filename.with_suffix(".svg")
+    plt.savefig(filename_pub, format="svg", bbox_inches="tight")
+
+
 def plot_err_vs_n_hits(
     target_labels,
     p_true_list,
@@ -196,6 +205,7 @@ def plot_err_vs_n_hits(
     low_pt=False,
     show=True,
     save=True,
+    publication=False,
 ):
     """Plot error vs number of hits."""
     for var_index, var in enumerate(target_labels):
@@ -261,6 +271,9 @@ def plot_err_vs_n_hits(
 
         if save:
             plt.savefig(filename, format="png", bbox_inches="tight")
+        if publication:
+            # Save the figure in publication format
+            publication_save(filename)
         if show:
             plt.show()
         plt.close()
@@ -278,6 +291,7 @@ def plot_pi_true_vs_pred(
     low_pt=False,
     show=True,
     save=True,
+    publication=False,
 ):
     """Plot true values vs predicted values."""
     for var_index, var in enumerate(target_labels):
@@ -342,6 +356,9 @@ def plot_pi_true_vs_pred(
 
         if save:
             plt.savefig(filename, format="png", bbox_inches="tight")
+        if publication:
+            # Save the figure in publication format
+            publication_save(filename)
         if show:
             plt.show()
         plt.close()
@@ -360,6 +377,7 @@ def plot_binned_confusion_matrix(
     low_pt=False,
     show=True,
     save=True,
+    publication=False,
 ):
     """
     For each variable and each model, make a binned 2D histogram of true vs predicted,
@@ -436,7 +454,10 @@ def plot_binned_confusion_matrix(
             plt.gca().set_aspect("equal", "box")
 
         if save:
-            fig.savefig(filename, bbox_inches="tight", dpi=150)
+            fig.savefig(filename, bbox_inches="tight")
+        if publication:
+            # Save the figure in publication format
+            publication_save(filename)
         if show:
             plt.show()
         plt.close(fig)
@@ -453,6 +474,7 @@ def plot_pi_error_distributions(
     # variable_labels,
     show=True,
     save=True,
+    publication=False,
 ):
     """Plot error distributions."""
     for var_index, var in enumerate(target_labels):
@@ -504,6 +526,9 @@ def plot_pi_error_distributions(
 
         if save:
             plt.savefig(filename, format="png", bbox_inches="tight")
+        if publication:
+            # Save the figure in publication format
+            publication_save(filename)
         if show:
             plt.show()
         plt.close()
@@ -522,6 +547,7 @@ def plot_pi_rel_resolutions(
     low_pt=False,
     show=True,
     save=True,
+    publication=False,
 ):
     """Plot relative resolutions."""
     for var_index, var in enumerate(target_labels):
@@ -718,6 +744,9 @@ def plot_pi_rel_resolutions(
                 plt.ylim(-20, 20)
         if save:
             plt.savefig(filename, format="png", bbox_inches="tight")
+        if publication:
+            # Save the figure in publication format
+            publication_save(filename)
         if show:
             plt.show()
         plt.close()
@@ -734,6 +763,7 @@ def plot_2d_histogram(
     # variable_labels,
     show=True,
     save=True,
+    publication=False,
 ):
     """Plot 2D histograms of relative errors vs true values."""
     for var_index, var in enumerate(target_labels):
@@ -790,6 +820,9 @@ def plot_2d_histogram(
 
         if save:
             plt.savefig(filename, format="png", bbox_inches="tight")
+        if publication:
+            # Save the figure in publication format
+            publication_save(filename)
         if show:
             plt.show()
         plt.close()
@@ -808,6 +841,7 @@ def plot_pi_relative_error_distributions(
     low_pt=False,
     show=True,
     save=True,
+    publication=False,
 ):
     """
     Plot distributions of the relative errors for the predicted variables.
@@ -883,6 +917,9 @@ def plot_pi_relative_error_distributions(
 
         if save:
             plt.savefig(filename, format="png", bbox_inches="tight")
+        if publication:
+            # Save the figure in publication format
+            publication_save(filename)
         if show:
             plt.show()
         plt.close()
@@ -899,6 +936,7 @@ def plot_pi_error_distributions_p(
     # variable_labels,
     show=True,
     save=False,
+    publication=False,
 ):
     """
     Plot distributions of the errors for the predicted variables, with special handling for q/p_T.
@@ -969,6 +1007,9 @@ def plot_pi_error_distributions_p(
 
         if save:
             plt.savefig(filename, format="png", bbox_inches="tight")
+        if publication:
+            # Save the figure in publication format
+            publication_save(filename)
         if show:
             plt.show()
         plt.close()
@@ -986,6 +1027,7 @@ def plot_pi_relative_error_distributions_low_pt_1_2(
     eta_range=None,
     show=True,
     save=True,
+    publication=False,
 ):
     """
     Plot detailed distributions of the relative errors for predicted variables,
@@ -1227,6 +1269,9 @@ def plot_pi_relative_error_distributions_low_pt_1_2(
 
         if save:
             plt.savefig(filename, format="png", bbox_inches="tight")
+        if publication:
+            # Save the figure in publication format
+            publication_save(filename)
         if show:
             plt.show()
         plt.close()
