@@ -639,7 +639,6 @@ def generate_plots(
                         title_suffix=title_suffix,
                         output_dir=output_dir,
                         variable_filenames=variable_filenames,
-                        low_pt=True,
                         eta_range=(min_eta, min_eta + 1),
                         show=show,
                         publication=publication,
