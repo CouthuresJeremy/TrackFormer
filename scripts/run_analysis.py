@@ -116,6 +116,13 @@ def parse_args():
         help="Comma-separated list of plots to generate (or 'all' for all plots)",
     )
 
+    # Publication argument
+    parser.add_argument(
+        "--publication",
+        action="store_true",
+        help="Generate publication-ready plots",
+    )
+
     return parser.parse_args()
 
 
@@ -386,11 +393,14 @@ def generate_plots(
     p_true_list = result_data["p_true_list"]
     n_hits_list = result_data["n_hits_list"]
 
+    publication = args.publication
+
     # Generate title suffix
     title_suffix = ""
-    title_suffix += f" ((${'$, $'.join([variable_labels[var] for var in config['input_variables']])}$)"
-    title_suffix += r" $ \to $ "
-    title_suffix += f"(${'$, $'.join([variable_labels[var] for var in config['output_variables']])}$))"
+    if not publication:
+        title_suffix += f" ((${'$, $'.join([variable_labels[var] for var in config['input_variables']])}$)"
+        title_suffix += r" $ \to $ "
+        title_suffix += f"(${'$, $'.join([variable_labels[var] for var in config['output_variables']])}$))"
 
     # Determine which plots to generate
     all_plots = [
@@ -414,6 +424,16 @@ def generate_plots(
         plots_to_generate = args.plots.split(",")
 
     show = args.show
+    if publication:
+        show = False
+        title_suffix += " (publication)"
+        output_dir = output_dir / "publication"
+        output_dir.mkdir(exist_ok=True, parents=True)
+        print(f"Publication output will be saved to: {output_dir}")
+    else:
+        output_dir = output_dir / "plots"
+        output_dir.mkdir(exist_ok=True, parents=True)
+        print(f"Plots will be saved to: {output_dir}")
 
     target_labels_list = [[variable_labels[var] for var in config["output_variables"]]]
     if config["output_variables"][0] in ["qopT", "qpT"]:
@@ -437,6 +457,7 @@ def generate_plots(
                     variable_filenames=variable_filenames,
                     low_pt=False,
                     show=show,
+                    publication=publication,
                 )
             elif plot_type == "true_vs_pred":
                 plot_binned_confusion_matrix(
@@ -448,6 +469,7 @@ def generate_plots(
                     output_dir=output_dir,
                     variable_filenames=variable_filenames,
                     show=show,
+                    publication=publication,
                 )
 
                 # Also generate low pT version
@@ -461,6 +483,7 @@ def generate_plots(
                     variable_filenames=variable_filenames,
                     low_pt=True,
                     show=show,
+                    publication=publication,
                 )
 
             elif plot_type == "error_distributions":
@@ -473,6 +496,7 @@ def generate_plots(
                     output_dir=output_dir,
                     variable_filenames=variable_filenames,
                     show=show,
+                    publication=publication,
                 )
 
             elif plot_type == "rel_resolutions":
@@ -487,6 +511,7 @@ def generate_plots(
                     pruning=False,
                     low_pt=False,
                     show=show,
+                    publication=publication,
                 )
 
             elif plot_type == "rel_resolutions_pruned":
@@ -501,6 +526,7 @@ def generate_plots(
                     pruning=True,
                     low_pt=False,
                     show=show,
+                    publication=publication,
                 )
 
             elif plot_type == "rel_resolutions_low_pt":
@@ -515,6 +541,7 @@ def generate_plots(
                     pruning=False,
                     low_pt=True,
                     show=show,
+                    publication=publication,
                 )
 
             elif plot_type == "2d_histogram":
@@ -527,6 +554,7 @@ def generate_plots(
                     output_dir=output_dir,
                     variable_filenames=variable_filenames,
                     show=show,
+                    publication=publication,
                 )
 
             elif plot_type == "relative_error_distributions":
@@ -541,6 +569,7 @@ def generate_plots(
                     abs=False,
                     low_pt=False,
                     show=show,
+                    publication=publication,
                 )
 
             elif plot_type == "relative_error_distributions_abs":
@@ -555,6 +584,7 @@ def generate_plots(
                     abs=True,
                     low_pt=False,
                     show=show,
+                    publication=publication,
                 )
 
             elif plot_type == "relative_error_distributions_low_pt":
@@ -569,6 +599,7 @@ def generate_plots(
                     abs=False,
                     low_pt=True,
                     show=show,
+                    publication=publication,
                 )
 
             elif plot_type == "error_distributions_p":
@@ -581,6 +612,7 @@ def generate_plots(
                     output_dir=output_dir,
                     variable_filenames=variable_filenames,
                     show=show,
+                    publication=publication,
                 )
 
             elif plot_type == "relative_error_distributions_low_pt_1_2":
@@ -593,6 +625,7 @@ def generate_plots(
                     output_dir=output_dir,
                     variable_filenames=variable_filenames,
                     show=show,
+                    publication=publication,
                 )
 
             else:
