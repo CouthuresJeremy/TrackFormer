@@ -1135,8 +1135,23 @@ class DatasetWrapper(Dataset):
     def __len__(self):
         """Returns the length of the dataset."""
         if self.dynamic_load:
-            # If dynamic loading is enabled, return None
-            return None
+            # If dynamic loading is enabled, calculate the length based on the number of chunks
+            # and the split size
+            chunk_count = self._get_next_split_index()
+            dataset_length = chunk_count * self.split_size
+            # Add the length of the final chunk if it exists
+            final_filename = self.data_file.with_name(
+                f"preprocessed_{self.folder}{self.data_file_suffix}_final{self.data_file.suffix}"
+            )
+            if not final_filename.is_file():
+                raise FileNotFoundError(
+                    f"Final file {final_filename} does not exist, there is an error in the preprocessing."
+                )
+            if final_filename.is_file():
+                # Load the final chunk to get its length
+                final_data = torch.load(final_filename)
+                dataset_length += len(final_data)
+            return dataset_length
         return len(self.datalist)
 
 
