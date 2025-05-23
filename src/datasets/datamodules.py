@@ -913,7 +913,13 @@ class DatasetWrapper(Dataset):
     """
 
     def __init__(
-        self, dataset_dir, folder, dataset="tml", split_size=1_000_000, **kwargs
+        self,
+        dataset_dir,
+        folder,
+        dataset="tml",
+        split_size=1_000_000,
+        dynamic_load=False,
+        **kwargs,
     ):
         self.dataset_dir = Path(dataset_dir)
         self.dataset_type = dataset.lower()
@@ -935,6 +941,8 @@ class DatasetWrapper(Dataset):
         self.split_size = split_size  # Number of samples per split
         self.wrapper_workers = kwargs.pop("wrapper_workers", int(os.cpu_count()))
         self.datalist = None
+        self.dynamic_load = dynamic_load
+        self.current_loaded_chunk = -1
 
         # Check if dataset is valid
         if self.dataset_type not in ("tml", "acts"):
@@ -958,6 +966,16 @@ class DatasetWrapper(Dataset):
         # Preprocess the data if not already done
         if not self._is_preprocessed():
             self._preprocess_data()
+
+        # If dynamic_load is set to True, load the data dynamically (i.e., on demand)
+        # This is useful for large datasets that cannot fit into memory
+        if self.dynamic_load:
+            console.print(
+                "Dynamic loading is enabled. Data will be loaded on demand.",
+                style="yellow",
+            )
+            self.datalist = []
+            return
 
         # Load the data from the preprocessed file
         if self.data_file.is_file():
@@ -1081,9 +1099,44 @@ class DatasetWrapper(Dataset):
         return i
 
     def __getitem__(self, index):
+        """Returns the data at the specified index."""
+        if self.dynamic_load:
+            # If dynamic loading is enabled, load the data on demand
+            # Find the chunk file that contains the index
+            chunk_index = index // self.split_size
+            chunk_offset = index % self.split_size
+            chunk_filename = self.data_file.with_name(
+                f"preprocessed_{self.folder}{self.data_file_suffix}_chunk_{chunk_index}{self.data_file.suffix}"
+            )
+            if chunk_filename.is_file():
+                self.datalist = torch.load(chunk_filename)
+                return self.datalist[chunk_offset]
+            else:
+                # Consider the case where the chunk is the final one
+                # If the chunk index is not 0 check if the previous chunk is valid
+                # The final chunk is then supposed to be the one containing the index
+                if chunk_index != 0:
+                    previous_chunk_filename = self.data_file.with_name(
+                        f"preprocessed_{self.folder}{self.data_file_suffix}_chunk_{chunk_index - 1}{self.data_file.suffix}"
+                    )
+                    if not previous_chunk_filename.is_file():
+                        raise FileNotFoundError
+                final_filename = self.data_file.with_name(
+                    f"preprocessed_{self.folder}{self.data_file_suffix}_final{self.data_file.suffix}"
+                )
+                # Check if the final file exists
+                if final_filename.is_file():
+                    self.datalist = torch.load(final_filename)
+                    # Calculate the index in the final file
+                    final_index = index - (chunk_index * self.split_size)
+                    return self.datalist[final_index]
         return self.datalist[index]
 
     def __len__(self):
+        """Returns the length of the dataset."""
+        if self.dynamic_load:
+            # If dynamic loading is enabled, return None
+            return None
         return len(self.datalist)
 
 
@@ -1104,6 +1157,7 @@ class DataModule(L.LightningDataModule):
         use_wrapper=True,
         persistance=False,
         pin_memory=False,
+        dynamic_load=False,
         kwargs={},  # kwargs for the dataset class
     ):
         super().__init__()
@@ -1167,6 +1221,7 @@ class DataModule(L.LightningDataModule):
             dataset=self.hparams.dataset_type,
             **self.dataset_class_kwargs,
             verbose=folder in ("train", "val"),
+            dynamic_load=self.hparams.dynamic_load
         )
 
     @staticmethod
