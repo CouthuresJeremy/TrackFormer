@@ -426,7 +426,6 @@ def generate_plots(
     show = args.show
     if publication:
         show = False
-        title_suffix += " (publication)"
         output_dir = output_dir / "publication"
         output_dir.mkdir(exist_ok=True, parents=True)
         print(f"Publication output will be saved to: {output_dir}")
@@ -630,7 +629,7 @@ def generate_plots(
 
                 # Get the maximum eta from the configuration
                 max_abs_eta = config["max_abs_eta"]
-                for min_eta in range(0, int(max_abs_eta) - 1):
+                for min_eta in range(0, int(max_abs_eta)):
                     plot_pi_relative_error_distributions_low_pt_1_2(
                         target_labels=target_labels,
                         p_true_list=p_true_list,
