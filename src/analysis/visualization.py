@@ -194,10 +194,10 @@ def publication_save(filename):
     # Add _no_title to the filename
     filename_pub = filename_pub.with_name(filename_pub.stem + "_no_title.svg")
     # Remove the title from the plot
-    prev_title = plt.title("")
+    prev_title = plt.suptitle("")
     plt.savefig(filename_pub, format="svg", bbox_inches="tight")
     # Restore the title
-    plt.title(prev_title)
+    plt.suptitle(prev_title)
 
 
 def plot_err_vs_n_hits(
