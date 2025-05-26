@@ -310,9 +310,13 @@ class BaseModel(L.LightningModule):
 
     def setup(self, stage=None):
         if stage == "fit" and self.trainer.datamodule:
-            self.total_steps = sum(
-                1 for _ in self.trainer.datamodule.train_dataloader()
-            )
+            # Get the total number of steps in the dataset
+            if hasattr(self.trainer.datamodule.train_dataloader(), "__len__"):
+                self.total_steps = len(self.trainer.datamodule.train_dataloader())
+            else:
+                self.total_steps = sum(
+                    1 for _ in self.trainer.datamodule.train_dataloader()
+                )
             print(f"Total steps in dataset: {self.total_steps}")
 
     def configure_optimizers(self):
