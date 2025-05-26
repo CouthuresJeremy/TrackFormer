@@ -1105,11 +1105,15 @@ class DatasetWrapper(Dataset):
             # Find the chunk file that contains the index
             chunk_index = index // self.split_size
             chunk_offset = index % self.split_size
+            if chunk_index == self.current_loaded_chunk:
+                # If the chunk is already loaded, return the data from the loaded list
+                return self.datalist[chunk_offset]
             chunk_filename = self.data_file.with_name(
                 f"preprocessed_{self.folder}{self.data_file_suffix}_chunk_{chunk_index}{self.data_file.suffix}"
             )
             if chunk_filename.is_file():
                 self.datalist = torch.load(chunk_filename)
+                self.current_loaded_chunk = chunk_index
                 return self.datalist[chunk_offset]
             else:
                 # Consider the case where the chunk is the final one
@@ -1127,6 +1131,7 @@ class DatasetWrapper(Dataset):
                 # Check if the final file exists
                 if final_filename.is_file():
                     self.datalist = torch.load(final_filename)
+                    self.current_loaded_chunk = chunk_index
                     # Calculate the index in the final file
                     final_index = index - (chunk_index * self.split_size)
                     return self.datalist[final_index]
