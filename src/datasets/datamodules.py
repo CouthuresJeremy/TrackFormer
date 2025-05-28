@@ -924,6 +924,7 @@ class DatasetWrapper(Dataset):
         self.dataset_dir = Path(dataset_dir)
         self.dataset_type = dataset.lower()
         self.folder = folder
+        self.load = kwargs.pop("load", True)
         dataset_suffix = kwargs.pop("dataset_suffix", "")
         # Add kwargs input_variables and output_variables if available
         input_variables = kwargs.get("input_variables", ["tx", "ty", "tz"])
@@ -967,6 +968,12 @@ class DatasetWrapper(Dataset):
         if not self._is_preprocessed():
             self._preprocess_data()
 
+        # If load is set to False, skip loading the data
+        if not self.load:
+            console.print(
+                "Skipping loading data as load is set to False.", style="yellow"
+            )
+            return
         # If dynamic_load is set to True, load the data dynamically (i.e., on demand)
         # This is useful for large datasets that cannot fit into memory
         if self.dynamic_load:
@@ -1246,6 +1253,10 @@ class DataModule(L.LightningDataModule):
             self.train_dataset = self._create_dataset("train")
             self.val_dataset = self._create_dataset("val")
 
+        if stage == "validate":
+            self.val_dataset = self._create_dataset("train", load=False)
+            self.val_dataset = self._create_dataset("val", load=False)
+
         if stage in ("test", None):
             self.test_dataset = self._create_dataset("test")
 
@@ -1270,7 +1281,7 @@ class DataModule(L.LightningDataModule):
             pin_memory=self.hparams.pin_memory,
         )
 
-    def _create_dataset(self, folder):
+    def _create_dataset(self, folder, load=True):
         """Helper method to create dataset for the given folder"""
         return self.dataset_class(
             dataset_dir=self.hparams.dataset_dir,
@@ -1278,7 +1289,8 @@ class DataModule(L.LightningDataModule):
             dataset=self.hparams.dataset_type,
             **self.dataset_class_kwargs,
             verbose=folder in ("train", "val"),
-            dynamic_load=self.hparams.dynamic_load
+            dynamic_load=self.hparams.dynamic_load,
+            load=load,
         )
 
     @staticmethod
