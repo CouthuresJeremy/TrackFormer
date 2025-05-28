@@ -1160,6 +1160,41 @@ class DatasetWrapper(Dataset):
         return len(self.datalist)
 
 
+class ShardedChunkDataset(DatasetWrapper, IterableDataset):
+    def __init__(self, dataset_dir, folder, split_size=1_000_000, **kwargs):
+        super().__init__(dataset_dir, folder, split_size=split_size, **kwargs)
+        import glob
+
+        self.chunk_files = sorted(
+            glob.glob(
+                str(
+                    self.dataset_dir
+                    / f"preprocessed_{self.folder}{self.data_file_suffix}_chunk_*.pt"
+                )
+            )
+        )
+        final_chunk = (
+            self.dataset_dir
+            / f"preprocessed_{self.folder}{self.data_file_suffix}_final.pt"
+        )
+        if final_chunk.is_file():
+            self.chunk_files.append(str(final_chunk))
+
+    def __iter__(self):
+        worker_info = get_worker_info()
+        if worker_info is None:
+            assigned_chunks = self.chunk_files
+        else:
+            total_workers = worker_info.num_workers
+            worker_id = worker_info.id
+            assigned_chunks = self.chunk_files[worker_id::total_workers]
+
+        for chunk_path in assigned_chunks:
+            chunk_data = torch.load(chunk_path, map_location="cpu")
+            for sample in chunk_data:
+                yield sample
+
+
 class DataModule(L.LightningDataModule):
     """
     Lightning DataModule for managing TrackML or ACTS datasets.
@@ -1191,8 +1226,10 @@ class DataModule(L.LightningDataModule):
             )
 
         # Set the dataset class
-        if use_wrapper:
+        if use_wrapper and not dynamic_load:
             self.dataset_class = DatasetWrapper
+        elif use_wrapper and dynamic_load:
+            self.dataset_class = ShardedChunkDataset
         elif dataset == "tml":
             self.dataset_class = TrackMLDataset
         elif dataset == "acts":
