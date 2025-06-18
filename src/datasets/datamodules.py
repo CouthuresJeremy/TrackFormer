@@ -1233,10 +1233,11 @@ class DataModule(L.LightningDataModule):
             )
 
         # Set the dataset class
-        if use_wrapper and not dynamic_load:
-            self.dataset_class = DatasetWrapper
-        elif use_wrapper and dynamic_load:
-            self.dataset_class = ShardedChunkDataset
+        if use_wrapper:
+            if not dynamic_load:
+                self.dataset_class = DatasetWrapper
+            else:
+                self.dataset_class = ShardedChunkDataset
         elif dataset == "tml":
             self.dataset_class = TrackMLDataset
         elif dataset == "acts":
