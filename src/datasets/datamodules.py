@@ -987,9 +987,11 @@ class DatasetWrapper(Dataset):
         # Load the data from the preprocessed file
         if self.data_file.is_file():
             console.print(f"Loading data from {self.data_file}", style="cyan")
-            self.datalist = torch.load(self.data_file)
+            data = torch.load(self.data_file)
+            self.datalist = [data]
         else:
             self.datalist = self._load_split_data()
+        self._build_index_map()
 
     def _is_preprocessed(self):
         """Check if the dataset has been preprocessed."""
@@ -1002,7 +1004,7 @@ class DatasetWrapper(Dataset):
         )
         return final_split_filename.is_file()
 
-    def _load_split_data(self):
+    def _load_split_data(self) -> list[dict]:
         """Loads the split data from multiple files."""
         datalist = []
         i = 0
@@ -1013,7 +1015,7 @@ class DatasetWrapper(Dataset):
             if split_filename.is_file():
                 console.print(f"Loading split data from {split_filename}", style="cyan")
                 split_data = torch.load(split_filename)
-                datalist.extend(split_data)
+                datalist.append(split_data)
                 i += 1
             else:
                 break
@@ -1024,7 +1026,7 @@ class DatasetWrapper(Dataset):
         if final_filename.is_file():
             console.print(f"Loading final data from {final_filename}", style="cyan")
             final_data = torch.load(final_filename)
-            datalist.extend(final_data)
+            datalist.append(final_data)
         else:
             raise FileNotFoundError(
                 f"Final file {final_filename} does not exist, there is an error in the preprocessing."
@@ -1055,7 +1057,7 @@ class DatasetWrapper(Dataset):
             )
         ds = self.ds_class(self.dataset_dir, self.folder, **self.ds_class_kwargs)
         ds_loader = DataLoader(ds, num_workers=self.wrapper_workers)
-        chunk_data = []
+        zxy_list, mask_list, target_list = [], [], []
         for particle_index, variables in enumerate(ds_loader):
             if particle_index < already_preprocessed:
                 continue
@@ -1063,21 +1065,37 @@ class DatasetWrapper(Dataset):
                 print(f"Processing particle {particle_index}")
 
             # Add the current batch of data to the chunk
-            chunk_data.append([var.squeeze() for var in variables])
+            zxy, mask, target_tensor = [var.squeeze() for var in variables]
+            zxy_list.append(zxy)
+            mask_list.append(mask)
+            target_list.append(target_tensor)
 
             # If the chunk reaches the split_size, save it and clear the chunk
-            if len(chunk_data) >= self.split_size:
-                self._save_data(chunk_data)
-                chunk_data.clear()  # Clear the chunk after saving
+            if len(zxy_list) >= self.split_size:
+                self._save_data(zxy_list, mask_list, target_list)
+                # Clear the chunk after saving
+                zxy_list.clear()
+                mask_list.clear()
+                target_list.clear()
 
         # Save any remaining data after the loop ends
-        if chunk_data:
-            self._save_data(chunk_data, final=True)
+        if zxy_list:
+            self._save_data(zxy_list, mask_list, target_list, final=True)
 
         print(f"Processed {particle_index+1} particles")
 
-    def _save_data(self, data, final=False):
+    def _save_data(self, zxy_list, mask_list, target_list, final=False):
         """Saves the dataset chunk, splitting it into parts if necessary based on split_size."""
+        zxy_tensor = pad_sequence(zxy_list, batch_first=True, padding_value=0.0)
+        mask_tensor = pad_sequence(mask_list, batch_first=True, padding_value=0)
+        target_tensor = torch.stack(target_list)
+        lengths = torch.tensor([z.shape[0] for z in zxy_list])
+        data_to_save = {
+            "zxy": zxy_tensor,
+            "mask": mask_tensor,
+            "target": target_tensor,
+            "lengths": lengths,
+        }
         # Save the chunk to a split file
         if final:
             # If this is the final chunk, save it with a different name
@@ -1090,7 +1108,7 @@ class DatasetWrapper(Dataset):
                 f"preprocessed_{self.folder}{self.data_file_suffix}_chunk_{self._get_next_split_index()}{self.data_file.suffix}"
             )
         # Save the chunk data
-        torch.save(data, split_filename)
+        torch.save(data_to_save, split_filename)
         print(f"Chunk dataset saved to {split_filename}")
 
     def _get_next_split_index(self):
@@ -1105,6 +1123,12 @@ class DatasetWrapper(Dataset):
             i += 1
         return i
 
+    def _build_index_map(self):
+        self.index_map = []
+        for chunk_idx, chunk in enumerate(self.datalist):
+            n = chunk["zxy"].shape[0]
+            self.index_map.extend([(chunk_idx, i) for i in range(n)])
+
     def __getitem__(self, index):
         """Returns the data at the specified index."""
         if self.dynamic_load:
@@ -1112,17 +1136,10 @@ class DatasetWrapper(Dataset):
             # Find the chunk file that contains the index
             chunk_index = index // self.split_size
             chunk_offset = index % self.split_size
-            if chunk_index == self.current_loaded_chunk:
-                # If the chunk is already loaded, return the data from the loaded list
-                return self.datalist[chunk_offset]
             chunk_filename = self.data_file.with_name(
                 f"preprocessed_{self.folder}{self.data_file_suffix}_chunk_{chunk_index}{self.data_file.suffix}"
             )
-            if chunk_filename.is_file():
-                self.datalist = torch.load(chunk_filename)
-                self.current_loaded_chunk = chunk_index
-                return self.datalist[chunk_offset]
-            else:
+            if not chunk_filename.is_file():
                 # Consider the case where the chunk is the final one
                 # If the chunk index is not 0 check if the previous chunk is valid
                 # The final chunk is then supposed to be the one containing the index
@@ -1132,39 +1149,54 @@ class DatasetWrapper(Dataset):
                     )
                     if not previous_chunk_filename.is_file():
                         raise FileNotFoundError
-                final_filename = self.data_file.with_name(
+                chunk_filename = self.data_file.with_name(
                     f"preprocessed_{self.folder}{self.data_file_suffix}_final{self.data_file.suffix}"
                 )
-                # Check if the final file exists
-                if final_filename.is_file():
-                    self.datalist = torch.load(final_filename)
-                    self.current_loaded_chunk = chunk_index
-                    # Calculate the index in the final file
-                    final_index = index - (chunk_index * self.split_size)
-                    return self.datalist[final_index]
-        return self.datalist[index]
+            chunk = torch.load(chunk_filename)
+            zxy = chunk["zxy"][chunk_offset]
+            mask = chunk["mask"][chunk_offset]
+            target = chunk["target"][chunk_offset]
+            length = chunk["lengths"][chunk_offset]
+            zxy = zxy[:length]
+            mask = mask[:length]
+            return zxy, mask, target
+        else:
+            chunk_idx, sample_idx = self.index_map[index]
+            chunk = self.datalist[chunk_idx]
+            zxy = chunk["zxy"][sample_idx]
+            mask = chunk["mask"][sample_idx]
+            target = chunk["target"][sample_idx]
+            length = chunk["lengths"][sample_idx]
+            zxy = zxy[:length]
+            mask = mask[:length]
+            return zxy, mask, target
 
     def __len__(self):
         """Returns the length of the dataset."""
         if self.dynamic_load:
             # If dynamic loading is enabled, calculate the length based on the number of chunks
             # and the split size
-            chunk_count = self._get_next_split_index()
-            dataset_length = chunk_count * self.split_size
+            count = 0
+            i = 0
+            while True:
+                chunk_filename = self.data_file.with_name(
+                    f"preprocessed_{self.folder}{self.data_file_suffix}_chunk_{i}{self.data_file.suffix}"
+                )
+                if not chunk_filename.is_file():
+                    break
+                chunk = torch.load(chunk_filename, map_location="cpu")
+                count += chunk["zxy"].shape[0]
+                i += 1
             # Add the length of the final chunk if it exists
             final_filename = self.data_file.with_name(
                 f"preprocessed_{self.folder}{self.data_file_suffix}_final{self.data_file.suffix}"
             )
-            if not final_filename.is_file():
-                raise FileNotFoundError(
-                    f"Final file {final_filename} does not exist, there is an error in the preprocessing."
-                )
             if final_filename.is_file():
-                # Load the final chunk to get its length
-                final_data = torch.load(final_filename)
-                dataset_length += len(final_data)
-            return dataset_length
-        return len(self.datalist)
+                chunk = torch.load(final_filename, map_location="cpu")
+                count += chunk["zxy"].shape[0]
+            return count
+        else:
+            return len(self.index_map)
 
 
 class ShardedChunkDataset(DatasetWrapper, IterableDataset):
