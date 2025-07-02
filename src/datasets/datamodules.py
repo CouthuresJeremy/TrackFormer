@@ -648,6 +648,30 @@ class ActsDataset(IterBase):
         Args:
             event_files (tuple): Tuple containing the loaded event data files.
         """
+        # Get kwargs input_variables if available
+        default_inputs = ["x", "y", "z"]
+        input_variables = getattr(self, "input_variables", default_inputs)
+
+        # Get kwargs output_variables if available
+        output_variables = getattr(self, "output_variables", ["pT", "pz"])
+
+        groups = self._preprocess_groups(event_files)
+        for group in groups:
+            inputs = group[input_variables].values
+            target = group[output_variables].values[0]
+
+            zxy = torch.tensor(inputs, dtype=torch.float32)
+            target_tensor = torch.tensor(target, dtype=torch.float32)
+
+            mask = torch.ones(zxy.shape[0], dtype=torch.bool)
+            yield zxy, mask, target_tensor
+
+    def _preprocess_groups(self, event_files):
+        """Preprocesses data for the specified event.
+
+        Args:
+            event_files (tuple): Tuple containing the loaded event data files.
+        """
 
         hits, tracks, particles = event_files
 
@@ -892,14 +916,14 @@ class ActsDataset(IterBase):
             if z_symmetry:
                 group = apply_z_symmetry(group)
 
-            inputs = group[input_variables].values
-            target = group[output_variables].values[0]
+            yield group
 
-            zxy = torch.tensor(inputs, dtype=torch.float32)
-            target_tensor = torch.tensor(target, dtype=torch.float32)
-
-            mask = torch.ones(zxy.shape[0], dtype=torch.bool)
-            yield zxy, mask, target_tensor
+    def _preprocess_inputs(self, input_hits):
+        zxy = input_hits.values
+        zxy = torch.tensor(zxy, dtype=torch.float32)
+        # Create a mask for the hits
+        mask = torch.ones(zxy.shape[0], dtype=torch.bool)
+        return zxy, mask
 
 
 class DatasetWrapper(Dataset):
