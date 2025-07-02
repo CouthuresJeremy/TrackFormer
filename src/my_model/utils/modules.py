@@ -327,6 +327,7 @@ class BaseModel(L.LightningModule):
                 optimizer,
                 warmup=self.hparams.warmup,
                 max_iters=self.total_steps * self.trainer.max_epochs,
+                min_lr=self.hparams.min_lr,
             )
             return [optimizer], [{"scheduler": lr_scheduler, "interval": "step"}]
         return optimizer

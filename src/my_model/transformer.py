@@ -60,6 +60,7 @@ class TrackFormer(BaseModel):
         criterion,
         warmup,
         lr,
+        min_lr=0.0,
         use_scheduler=True,
         dropout=0.0,
         input_dropout=0.0,
