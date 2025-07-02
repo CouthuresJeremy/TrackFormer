@@ -117,7 +117,23 @@ class TrackFormer(BaseModel):
         if self.positional_encoding is not None:
             x = self.positional_encoding(x)  # Apply positional encoding if not RoPE
         x = self.transformer(x, mask=mask)
-        x = x.mean(dim=1)
+
+        # Average pooling over the sequence length dimension (dim=1)
+        # If padding is used, this will be impacted by the padding
+        if mask is not None:
+            # If a mask is provided, we need to average only over the unmasked elements
+            reversed_mask = ~mask
+            x = x.masked_fill(reversed_mask.unsqueeze(-1), 0.0)
+            # Calculate the unmasked count for each sequence in the batch
+            unmasked_count = mask.sum(dim=1, keepdim=True).clamp(min=1)
+            # Make sure the unmasked count is an integer
+            assert (
+                unmasked_count.dtype == torch.int64
+            ), "Unmasked count should be of type int64"
+            x = x.sum(dim=1) / unmasked_count
+        else:
+            # If no mask is provided, simply average over the sequence length dimension
+            x = x.mean(dim=1)
         x = self.regression_head(x)
         return x
 
