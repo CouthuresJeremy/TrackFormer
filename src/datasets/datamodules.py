@@ -821,10 +821,20 @@ class ActsDataset(IterBase):
             merged_df["ptheta"] = np.arctan2(merged_df["pT"], merged_df["pz"])
 
         grouped = merged_df.groupby(track_index)
+        verbose = getattr(self, "verbose", False)
+        if verbose:
+            print(f"Processing event {self.event}")
+            print(f"Number of tracks: {len(grouped)}")
 
-        for _, group in grouped:
+        for group_id, group in grouped:
+            if verbose:
+                print(f"Processing track {group_id} with {group.shape[0]} hits")
             # Cut tracks with too few hits
             if group.shape[0] < min_hits:
+                if verbose:
+                    print(
+                        f"Skipping track with {group.shape[0]} hits (min_hits={min_hits})"
+                    )
                 continue
 
             # Cut scattered tracks
@@ -861,6 +871,11 @@ class ActsDataset(IterBase):
                     < 0
                 ).any()
                 if scattered:
+                    if verbose:
+                        # Print the track id and number of hits
+                        print(
+                            f"Skipping scattered track {group['particle_id'].iloc[0]} with {group.shape[0]} hits"
+                        )
                     continue
 
             # Sort by the hits by radius
