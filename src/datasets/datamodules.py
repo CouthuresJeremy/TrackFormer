@@ -710,8 +710,8 @@ class ActsDataset(IterBase):
             hits = pd.merge(
                 hits,
                 tracks,
-                on=["hit_id", "particle_id"],
-                validate="one_to_one",
+                on=["hit_id"],
+                validate="one_to_many",
             )
 
         particle_types = getattr(self, "particle_types", None)
