@@ -676,6 +676,7 @@ class ActsDataset(IterBase):
         Args:
             event_files (tuple): Tuple containing the loaded event data files.
         """
+        verbose = getattr(self, "verbose", False)
 
         hits, tracks, particles = event_files
 
@@ -728,8 +729,20 @@ class ActsDataset(IterBase):
         # particles = particles[particles["nhits"] >= min_hits]
 
         n_hits = hits.shape[0]
+        if verbose:
+            # print the number of particles that does not have corresponding hits
+            n_particles_without_hits = len(
+                particles[~particles["particle_id"].isin(hits["particle_id"])]
+            )
+            if n_particles_without_hits > 0:
+                console.log(
+                    f"[red]Warning: {n_particles_without_hits} particles do not have corresponding hits."
+                )
+                # Print the particle ids
+                console.log(
+                    f"[red]Particle ids: {particles[~particles['particle_id'].isin(hits['particle_id'])]['particle_id'].unique()}"
+                )
         merged_df = pd.merge(hits, particles, on="particle_id", validate="many_to_one")
-        # merged_df = pd.merge(merged_df, hits, on="hit_id")
 
         # Verify that the number of hits is the same
         if n_hits != merged_df.shape[0] and particle_types is None:
@@ -825,7 +838,6 @@ class ActsDataset(IterBase):
             merged_df["ptheta"] = np.arctan2(merged_df["pT"], merged_df["pz"])
 
         grouped = merged_df.groupby(track_index)
-        verbose = getattr(self, "verbose", False)
         if verbose:
             print(f"Processing event {self.event}")
             print(f"Number of tracks: {len(grouped)}")
