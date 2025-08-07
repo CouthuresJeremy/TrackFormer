@@ -966,7 +966,7 @@ class ActsDatasetProcessing:
         return zxy, mask
 
 
-class ActsDataset(IterBase, ActsDatasetProcessing):
+class ActsDataset(ActsDatasetProcessing, IterBase):
 
     def _load_event(self, event_prefix):
         self.event = event_prefix
