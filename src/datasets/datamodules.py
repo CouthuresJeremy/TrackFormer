@@ -733,7 +733,9 @@ class ActsDatasetProcessing:
                 f"[yellow]Warning: Number of hits in {self.event} does not match the number of hits in the merged dataframe.[/yellow]"
             )
 
-        merged_df["pT"] = np.sqrt(merged_df["px"] ** 2 + merged_df["py"] ** 2)
+        if not "pT" in merged_df.columns:
+            # Calculate transverse momentum pT
+            merged_df["pT"] = np.sqrt(merged_df["px"] ** 2 + merged_df["py"] ** 2)
 
         # Get kwargs min_pt and max_pt if available
         min_pt = getattr(self, "min_pt", 0)
@@ -749,8 +751,11 @@ class ActsDatasetProcessing:
             )
             merged_df = merged_df[~secondary_selection]
 
-        p = np.sqrt(merged_df["px"] ** 2 + merged_df["py"] ** 2 + merged_df["pz"] ** 2)
-        merged_df["peta"] = np.arctanh(merged_df["pz"] / p)
+        if not "peta" in merged_df.columns:
+            p = np.sqrt(
+                merged_df["px"] ** 2 + merged_df["py"] ** 2 + merged_df["pz"] ** 2
+            )
+            merged_df["peta"] = np.arctanh(merged_df["pz"] / p)
 
         # Get kwargs min_abs_eta and max_abs_eta if available
         min_abs_eta = getattr(self, "min_abs_eta", 0)
@@ -789,9 +794,12 @@ class ActsDatasetProcessing:
 
         if any([var not in merged_df.columns for var in output_variables]):
             # Add other track parameters
-            merged_df["qopT"] = merged_df["q"] / merged_df["pT"]
-            merged_df["qpT"] = merged_df["q"] * merged_df["pT"]
-            merged_df["phi0"] = np.arctan2(merged_df["py"], merged_df["px"])
+            if not "qopT" in merged_df.columns:
+                merged_df["qopT"] = merged_df["q"] / merged_df["pT"]
+            if not "qpT" in merged_df.columns:
+                merged_df["qpT"] = merged_df["q"] * merged_df["pT"]
+            if not "phi0" in merged_df.columns:
+                merged_df["phi0"] = np.arctan2(merged_df["py"], merged_df["px"])
             if any(
                 [
                     var in output_variables
@@ -799,8 +807,8 @@ class ActsDatasetProcessing:
                 ]
             ):
                 (
-                    merged_df["d0"],
-                    merged_df["z0"],
+                    computed_d0,
+                    computed_z0,
                     (
                         merged_df["x_perigee"],
                         merged_df["y_perigee"],
@@ -817,7 +825,12 @@ class ActsDatasetProcessing:
                     z_v=merged_df["vz"],
                     reference_point=(0, 0, 0),
                 )
-            merged_df["ptheta"] = np.arctan2(merged_df["pT"], merged_df["pz"])
+                if not "d0" in merged_df.columns:
+                    merged_df["d0"] = computed_d0
+                if not "z0" in merged_df.columns:
+                    merged_df["z0"] = computed_z0
+            if not "ptheta" in merged_df.columns:
+                merged_df["ptheta"] = np.arctan2(merged_df["pT"], merged_df["pz"])
 
         grouped = merged_df.groupby(track_index)
         if verbose:
