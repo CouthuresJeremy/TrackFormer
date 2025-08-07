@@ -792,7 +792,18 @@ class ActsDatasetProcessing:
         # Get kwargs output_variables if available
         output_variables = getattr(self, "output_variables", ["pT", "pz"])
 
-        if any([var not in merged_df.columns for var in output_variables]):
+        computed_impact_parameters = getattr(self, "computed_impact_parameters", False)
+        if computed_impact_parameters and not any(
+            impact_parameter in output_variables
+            for impact_parameter in ["d0", "z0", "x_perigee", "y_perigee", "z_perigee"]
+        ):
+            raise ValueError(
+                "computed_impact_parameters is True, but no impact parameters are requested in output_variables."
+            )
+        if (
+            any([var not in merged_df.columns for var in output_variables])
+            or computed_impact_parameters
+        ):
             # Add other track parameters
             if not "qopT" in merged_df.columns:
                 merged_df["qopT"] = merged_df["q"] / merged_df["pT"]
@@ -800,11 +811,14 @@ class ActsDatasetProcessing:
                 merged_df["qpT"] = merged_df["q"] * merged_df["pT"]
             if not "phi0" in merged_df.columns:
                 merged_df["phi0"] = np.arctan2(merged_df["py"], merged_df["px"])
-            if any(
-                [
-                    var in output_variables
-                    for var in ["d0", "z0", "x_perigee", "y_perigee", "z_perigee"]
-                ]
+            if (
+                any(
+                    [
+                        var in output_variables
+                        for var in ["d0", "z0", "x_perigee", "y_perigee", "z_perigee"]
+                    ]
+                )
+                or computed_impact_parameters
             ):
                 (
                     computed_d0,
@@ -825,9 +839,9 @@ class ActsDatasetProcessing:
                     z_v=merged_df["vz"],
                     reference_point=(0, 0, 0),
                 )
-                if not "d0" in merged_df.columns:
+                if not "d0" in merged_df.columns or computed_impact_parameters:
                     merged_df["d0"] = computed_d0
-                if not "z0" in merged_df.columns:
+                if not "z0" in merged_df.columns or computed_impact_parameters:
                     merged_df["z0"] = computed_z0
             if not "ptheta" in merged_df.columns:
                 merged_df["ptheta"] = np.arctan2(merged_df["pT"], merged_df["pz"])
