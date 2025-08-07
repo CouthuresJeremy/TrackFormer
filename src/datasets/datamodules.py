@@ -665,18 +665,18 @@ class ActsDatasetProcessing:
         # Add Hit_ID to the hits dataframe (index)
         hits["hit_id"] = hits.index
 
-        # Convert particle_id to 64-bit unsigned int
-        tracks["particle_id"] = tracks["particleId"].apply(parse_particle_id)
-        del tracks["particleId"]
-        # Verify that the particle_id is in the particles dataframe
-        if not tracks["particle_id"].isin(particles["particle_id"]).all():
-            raise ValueError(
-                f"Particle id {len(tracks['particle_id'][~tracks['particle_id'].isin(particles['particle_id'])])} not in particles dataframe"
-            )
-
         truth_tracks = getattr(self, "truth_tracks", True)
         track_index = "particle_id"
         if not truth_tracks:
+            # Convert particle_id to 64-bit unsigned int
+            tracks["particle_id"] = tracks["particleId"].apply(parse_particle_id)
+            del tracks["particleId"]
+            # Verify that the particle_id is in the particles dataframe
+            if not tracks["particle_id"].isin(particles["particle_id"]).all():
+                raise ValueError(
+                    f"Particle id {len(tracks['particle_id'][~tracks['particle_id'].isin(particles['particle_id'])])} not in particles dataframe"
+                )
+
             track_index = "track_id"
             # Extract the hits from the tracks
             # Convert "[5747,7769,13699,]" to [5747, 7769, 13699]
