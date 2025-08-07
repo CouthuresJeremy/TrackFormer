@@ -627,25 +627,7 @@ def parse_particle_id(s: str) -> int:
     return combine_segments(parts)
 
 
-class ActsDataset(IterBase):
-
-    def _load_event(self, event_prefix):
-        self.event = event_prefix
-        particle_file = getattr(self, "particle_file", "particles_simulated")
-        hits_file = getattr(self, "hits_file", "hits")
-        track_file = getattr(self, "track_file", "tracks_ambi")
-
-        particles = self.path / f"{event_prefix}-{particle_file}.csv"
-        hits = self.path / f"{event_prefix}-{hits_file}.csv"
-        tracks = self.path / f"{event_prefix}-{track_file}.csv"
-        if getattr(self, "verbose", False):
-            print(f"Loading event {event_prefix}")
-        return (
-            pd.read_csv(hits),
-            pd.read_csv(tracks),
-            pd.read_csv(particles),
-        )
-
+class ActsDatasetProcessing:
     def _preprocessor(self, event_files):
         """Preprocesses data for the specified event.
 
@@ -955,6 +937,26 @@ class ActsDataset(IterBase):
         # Create a mask for the hits
         mask = torch.ones(zxy.shape[0], dtype=torch.bool)
         return zxy, mask
+
+
+class ActsDataset(IterBase, ActsDatasetProcessing):
+
+    def _load_event(self, event_prefix):
+        self.event = event_prefix
+        particle_file = getattr(self, "particle_file", "particles_simulated")
+        hits_file = getattr(self, "hits_file", "hits")
+        track_file = getattr(self, "track_file", "tracks_ambi")
+
+        particles = self.path / f"{event_prefix}-{particle_file}.csv"
+        hits = self.path / f"{event_prefix}-{hits_file}.csv"
+        tracks = self.path / f"{event_prefix}-{track_file}.csv"
+        if getattr(self, "verbose", False):
+            print(f"Loading event {event_prefix}")
+        return (
+            pd.read_csv(hits),
+            pd.read_csv(tracks),
+            pd.read_csv(particles),
+        )
 
 
 class DatasetWrapper(Dataset):
