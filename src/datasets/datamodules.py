@@ -1339,6 +1339,7 @@ class DatasetWrapper(Dataset):
         ds = self.ds_class(self.dataset_dir, self.folder, **self.ds_class_kwargs)
         ds_loader = DataLoader(ds, num_workers=self.wrapper_workers)
         zxy_list, mask_list, target_list = [], [], []
+        particle_index = -1
         for particle_index, variables in enumerate(ds_loader):
             if particle_index < already_preprocessed:
                 continue
@@ -1364,6 +1365,8 @@ class DatasetWrapper(Dataset):
             self._save_data(zxy_list, mask_list, target_list, final=True)
 
         print(f"Processed {particle_index+1} particles")
+        if particle_index < 0:
+            raise ValueError("No particles were processed. Check your dataset.")
 
     def _save_data(self, zxy_list, mask_list, target_list, final=False):
         """Saves the dataset chunk, splitting it into parts if necessary based on split_size."""
