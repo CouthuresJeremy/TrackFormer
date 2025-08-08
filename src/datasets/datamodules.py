@@ -1225,7 +1225,7 @@ class DatasetWrapper(Dataset):
         self.current_loaded_chunk = -1
 
         # Check if dataset is valid
-        if self.dataset_type not in ("tml", "acts"):
+        if self.dataset_type not in ("tml", "acts", "acts_root"):
             raise ValueError(
                 f"Invalid dataset type '{dataset}'. Expected 'tml' or 'acts'."
             )
@@ -1235,6 +1235,8 @@ class DatasetWrapper(Dataset):
             self.ds_class = TrackMLDataset
         elif self.dataset_type == "acts":
             self.ds_class = ActsDataset
+        elif self.dataset_type == "acts_root":
+            self.ds_class = ActsRootDataset
 
         # Add kwargs to the class
         self.ds_class_kwargs = kwargs
@@ -1538,7 +1540,7 @@ class DataModule(L.LightningDataModule):
         dataset = self.hparams.dataset_type.lower()
 
         # Check if dataset is valid
-        if dataset not in ("tml", "acts"):
+        if dataset not in ("tml", "acts", "acts_root"):
             raise ValueError(
                 f"Invalid dataset_type '{dataset}'. Expected 'tml' or 'acts'."
             )
