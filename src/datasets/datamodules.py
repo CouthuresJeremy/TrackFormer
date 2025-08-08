@@ -188,6 +188,143 @@ class IterBase(IterableDataset, ABC):
             yield from processed_data
 
 
+class RootIterBase(IterBase):
+    """Iterable Base class for ROOT datasets."""
+
+    def __init__(self, dataset_dir, folder="train", dataset=None, **kwargs):
+        self.path = Path(dataset_dir) / folder
+        # Find all ROOT files in the subdirectories
+        self.root_files = sorted(list(self.path.glob("**/*.root")))
+        # Remove files starting with "performance"
+        self.root_files = [
+            f for f in self.root_files if not f.name.startswith("performance")
+        ]
+        super().__init__(dataset_dir, folder, dataset, **kwargs)
+        self.available_events = self._event_range()
+
+    def _event_range(self):
+        # Find the number of events in the ROOT files
+        import uproot
+
+        event_numbers = []
+        for root_file in self.root_files:
+            if not root_file.name.startswith("tracksummary_ambi"):
+                continue
+            with uproot.open(root_file) as f:
+                keys = list(f.keys())
+                if len(keys) == 1 or True:
+                    keys = keys[0]
+
+                
+                event_number_key = [k for k in f[keys].keys() if "event" in k]
+                assert (
+                    len(event_number_key) == 1
+                ), "Expected exactly one event number key, found: {}".format(
+                    event_number_key
+                )
+                event_number_key = event_number_key[0]
+                assert (
+                    event_number_key == "event_nr"
+                ), "Expected event number key to be 'event_nr', found: {}".format(
+                    event_number_key
+                )
+                event_numbers.extend(f[keys][event_number_key].array().tolist())
+        return sorted(list(set(event_numbers)))
+
+    def _preprocessor(self, event: str):
+        """preprocessing logic."""
+        raise NotImplementedError
+
+    def _load_event(self, eventfiles):
+        """loading logic."""
+        raise NotImplementedError
+
+
+def convert_tree_to_dataframe(
+    f, keys, branches_to_load=None, event_nr=None, verbose=False
+):
+    import awkward as ak
+
+    if branches_to_load is None:
+        branches_to_load = f[keys].keys()
+    if event_nr is None:
+        ak_array = f[keys].arrays(library="ak", filter_name=branches_to_load)
+    else:
+        ak_array = f[keys].arrays(
+            library="ak",
+            filter_name=branches_to_load,
+            entry_start=event_nr,
+            entry_stop=event_nr + 1,
+        )
+    if verbose:
+        print("Branch types:")
+        for key in ak_array.fields:
+            print(f"{key}: {ak.type(ak_array[key])}")
+
+    # Function: keep 100 * var * X (non-nested jagged)
+    def is_single_jagged(array):
+        t = array.type
+        return isinstance(t.content, ak.types.ListType) and not isinstance(
+            t.content.content, ak.types.ListType
+        )
+
+    # Separate fields
+    scalar_fields = {}
+    jagged_fields = {}
+
+    for key in ak_array.fields:
+        if not isinstance(ak_array[key].type.content, ak.types.ListType):
+            scalar_fields[key] = ak_array[key]
+        elif is_single_jagged(ak_array[key]):
+            jagged_fields[key] = ak_array[key]
+        elif verbose:
+            print(f"Skipping {key}: not a 1D jagged array")
+
+    # Stop if no jagged arrays
+    if not jagged_fields:
+        if not scalar_fields:
+            raise RuntimeError(
+                "No 1D jagged branches (100 * var * X) found in the tree."
+            )
+        if verbose:
+            print("No jagged arrays found, only scalar fields.")
+        # Convert scalar fields to DataFrame
+        df = pd.DataFrame({k: ak.to_numpy(v) for k, v in scalar_fields.items()})
+        if verbose:
+            print("DataFrame with scalar fields only:")
+            print(df.head())
+            print("DataFrame shape:", df.shape)
+            print("DataFrame columns:", df.columns)
+        return df
+
+    # Use one jagged array to determine counts for broadcasting
+    ref_jagged_array = next(iter(jagged_fields.values()))
+    counts = ak.num(ref_jagged_array)
+    if verbose:
+        print(f"Counts for jagged arrays: {counts}")
+
+    # Reference jagged array
+    ref_jagged_array = next(iter(jagged_fields.values()))
+
+    # Broadcast scalar fields to jagged shape
+    broadcasted = ak.broadcast_arrays(ref_jagged_array, *scalar_fields.values())
+    broadcasted_scalars = dict(zip(scalar_fields.keys(), broadcasted[1:]))
+
+    # Zip and flatten
+    zipped = ak.zip({**broadcasted_scalars, **jagged_fields})
+    flattened = ak.flatten(zipped, axis=1)
+
+    # To DataFrame
+    df = pd.DataFrame({k: ak.to_numpy(flattened[k]) for k in flattened.fields})
+
+    # Preview
+    if verbose:
+        print(df.head())
+        print("DataFrame shape:", df.shape)
+        print("DataFrame columns:", df.columns)
+    return df
+
+
 ########################################### streamline datasets:
 
 
@@ -985,6 +1122,65 @@ class ActsDataset(ActsDatasetProcessing, IterBase):
         )
 
 
+class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
+
+    def _load_event(self, event_prefix):
+        self.event = event_prefix
+        particle_file = getattr(self, "particle_file", "particles_hits")
+        hits_file = getattr(self, "hits_file", "hits")
+        particles = (
+            self.path
+            / f"odd_output_tt_split_start_{event_prefix // 100 * 100}_n_100"
+            / f"{particle_file}.root"
+        )
+        hits = (
+            self.path
+            / f"odd_output_tt_split_start_{event_prefix // 100 * 100}_n_100"
+            / f"{hits_file}.root"
+        )
+
+        import uproot
+
+        with uproot.open(hits) as f:
+            hits = convert_tree_to_dataframe(f, keys=list(f.keys())[0])
+        # Keep only the hits with the correct event number
+        hits = hits[hits["event_id"] == event_prefix]
+        with uproot.open(particles) as f:
+            particles = convert_tree_to_dataframe(
+                f, keys=list(f.keys())[0], event_nr=event_prefix % 100
+            )
+            # print(f"Loaded {particles.shape[0]} particles from {particles}")
+
+        # Sanity checks
+        assert (
+            len(hits["event_id"].unique()) == 1
+        ), f"Expected only one event_id in hits, got {hits['event_id'].unique()}"
+        assert (
+            len(particles["event_id"].unique()) == 1
+        ), f"Expected only one event_id in particles, got {particles['event_id'].unique()}"
+        del hits["event_id"]
+        del particles["event_id"]
+
+        # Renaming columns
+        particles.rename(
+            columns={
+                "pt": "pT",
+                "phi": "phi0",
+                "eta": "peta",
+                "theta": "ptheta",
+            },
+            inplace=True,
+        )
+
+        if getattr(self, "verbose", False):
+            print(f"Loading event {event_prefix}")
+        return (
+            hits,
+            pd.DataFrame(),
+            particles,
+        )
+
+
 class DatasetWrapper(Dataset):
     """
     Traditional torch dataloading from saved object.
@@ -1357,6 +1553,8 @@ class DataModule(L.LightningDataModule):
             self.dataset_class = TrackMLDataset
         elif dataset == "acts":
             self.dataset_class = ActsDataset
+        elif dataset == "acts_root":
+            self.dataset_class = ActsRootDataset
 
         # Add kwargs to the class
         self.dataset_class_kwargs = kwargs
