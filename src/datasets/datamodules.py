@@ -662,6 +662,9 @@ class ActsDatasetProcessing:
 
         hits, tracks, particles = event_files
 
+        # Preprocess the particles dataframe
+        particles = self._preprocess_particles(particles)
+
         # Add Hit_ID to the hits dataframe (index)
         hits["hit_id"] = hits.index
 
@@ -701,16 +704,6 @@ class ActsDatasetProcessing:
                 validate="one_to_many",
             )
 
-        particle_types = getattr(self, "particle_types", None)
-        if particle_types is not None:
-            # Filter particles based on the specified particle types
-            particles = particles[particles["particle_type"].isin(particle_types)]
-
-        # Get kwargs min_hits if available
-        min_hits = getattr(self, "min_hits", 5)
-        # particles = particles[particles["nhits"] >= min_hits]
-
-        n_hits = hits.shape[0]
         if verbose:
             # print the number of particles that does not have corresponding hits
             n_particles_without_hits = len(
@@ -725,46 +718,6 @@ class ActsDatasetProcessing:
                     f"[red]Particle ids: {particles[~particles['particle_id'].isin(hits['particle_id'])]['particle_id'].unique()}"
                 )
         merged_df = pd.merge(hits, particles, on="particle_id", validate="many_to_one")
-
-        # Verify that the number of hits is the same
-        if n_hits != merged_df.shape[0] and particle_types is None:
-            # Show a warning instead of raising an error
-            console.print(
-                f"[yellow]Warning: Number of hits in {self.event} does not match the number of hits in the merged dataframe.[/yellow]"
-            )
-
-        if not "pT" in merged_df.columns:
-            # Calculate transverse momentum pT
-            merged_df["pT"] = np.sqrt(merged_df["px"] ** 2 + merged_df["py"] ** 2)
-
-        # Get kwargs min_pt and max_pt if available
-        min_pt = getattr(self, "min_pt", 0)
-        max_pt = getattr(self, "max_pt", np.inf)
-
-        merged_df = merged_df[(merged_df["pT"] >= min_pt) & (merged_df["pT"] <= max_pt)]
-
-        # Get kwargs keep_secondaries if available
-        keep_secondaries = getattr(self, "keep_secondaries", True)
-        if not keep_secondaries:
-            secondary_selection = (np.abs(merged_df["vx"]) >= 1) | (
-                np.abs(merged_df["vy"]) >= 1
-            )
-            merged_df = merged_df[~secondary_selection]
-
-        if not "peta" in merged_df.columns:
-            p = np.sqrt(
-                merged_df["px"] ** 2 + merged_df["py"] ** 2 + merged_df["pz"] ** 2
-            )
-            merged_df["peta"] = np.arctanh(merged_df["pz"] / p)
-
-        # Get kwargs min_abs_eta and max_abs_eta if available
-        min_abs_eta = getattr(self, "min_abs_eta", 0)
-        max_abs_eta = getattr(self, "max_abs_eta", np.inf)
-
-        merged_df = merged_df[
-            (np.abs(merged_df["peta"]) >= min_abs_eta)
-            & (np.abs(merged_df["peta"]) <= max_abs_eta)
-        ]
 
         # Get kwargs truth_position if available
         truth_position = getattr(self, "truth_position", True)
@@ -789,68 +742,13 @@ class ActsDatasetProcessing:
             merged_df["r"] = np.sqrt(merged_df["x"] ** 2 + merged_df["y"] ** 2)
             merged_df["phi"] = np.arctan2(merged_df["y"], merged_df["x"])
 
-        # Get kwargs output_variables if available
-        output_variables = getattr(self, "output_variables", ["pT", "pz"])
-
-        computed_impact_parameters = getattr(self, "computed_impact_parameters", False)
-        if computed_impact_parameters and not any(
-            impact_parameter in output_variables
-            for impact_parameter in ["d0", "z0", "x_perigee", "y_perigee", "z_perigee"]
-        ):
-            raise ValueError(
-                "computed_impact_parameters is True, but no impact parameters are requested in output_variables."
-            )
-        if (
-            any([var not in merged_df.columns for var in output_variables])
-            or computed_impact_parameters
-        ):
-            # Add other track parameters
-            if not "qopT" in merged_df.columns:
-                merged_df["qopT"] = merged_df["q"] / merged_df["pT"]
-            if not "qpT" in merged_df.columns:
-                merged_df["qpT"] = merged_df["q"] * merged_df["pT"]
-            if not "phi0" in merged_df.columns:
-                merged_df["phi0"] = np.arctan2(merged_df["py"], merged_df["px"])
-            if (
-                any(
-                    [
-                        var in output_variables
-                        for var in ["d0", "z0", "x_perigee", "y_perigee", "z_perigee"]
-                    ]
-                )
-                or computed_impact_parameters
-            ):
-                (
-                    computed_d0,
-                    computed_z0,
-                    (
-                        merged_df["x_perigee"],
-                        merged_df["y_perigee"],
-                        merged_df["z_perigee"],
-                    ),
-                ) = compute_impact_parameters(
-                    p_x=merged_df["px"],
-                    p_y=merged_df["py"],
-                    p_z=merged_df["pz"],
-                    q=merged_df["q"],
-                    B=2,
-                    x_v=merged_df["vx"],
-                    y_v=merged_df["vy"],
-                    z_v=merged_df["vz"],
-                    reference_point=(0, 0, 0),
-                )
-                if not "d0" in merged_df.columns or computed_impact_parameters:
-                    merged_df["d0"] = computed_d0
-                if not "z0" in merged_df.columns or computed_impact_parameters:
-                    merged_df["z0"] = computed_z0
-            if not "ptheta" in merged_df.columns:
-                merged_df["ptheta"] = np.arctan2(merged_df["pT"], merged_df["pz"])
-
         grouped = merged_df.groupby(track_index)
         if verbose:
             print(f"Processing event {self.event}")
             print(f"Number of tracks: {len(grouped)}")
 
+        # Get kwargs min_hits if available
+        min_hits = getattr(self, "min_hits", 5)
         for group_id, group in grouped:
             if verbose:
                 print(f"Processing track {group_id} with {group.shape[0]} hits")
@@ -957,6 +855,107 @@ class ActsDatasetProcessing:
                 group = apply_z_symmetry(group)
 
             yield group
+
+    def _preprocess_particles(self, particles):
+        # Preprocess the particles dataframe
+
+        # Get kwargs particle_types if available
+        particle_types = getattr(self, "particle_types", None)
+        if particle_types is not None:
+            # Filter particles based on the specified particle types
+            particles = particles[particles["particle_type"].isin(particle_types)]
+
+        # Get kwargs keep_secondaries if available
+        keep_secondaries = getattr(self, "keep_secondaries", True)
+        if not keep_secondaries:
+            secondary_selection = (np.abs(particles["vx"]) >= 1) | (
+                np.abs(particles["vy"]) >= 1
+            )
+            particles = particles[~secondary_selection]
+
+        if not "pT" in particles.columns:
+            # Calculate transverse momentum pT
+            particles["pT"] = np.sqrt(particles["px"] ** 2 + particles["py"] ** 2)
+
+        # Get kwargs min_pt and max_pt if available
+        min_pt = getattr(self, "min_pt", 0)
+        max_pt = getattr(self, "max_pt", np.inf)
+
+        particles = particles[(particles["pT"] >= min_pt) & (particles["pT"] <= max_pt)]
+
+        if not "peta" in particles.columns:
+            p = np.sqrt(
+                particles["px"] ** 2 + particles["py"] ** 2 + particles["pz"] ** 2
+            )
+            particles["peta"] = np.arctanh(particles["pz"] / p)
+
+        # Get kwargs min_abs_eta and max_abs_eta if available
+        min_abs_eta = getattr(self, "min_abs_eta", 0)
+        max_abs_eta = getattr(self, "max_abs_eta", np.inf)
+
+        particles = particles[
+            (np.abs(particles["peta"]) >= min_abs_eta)
+            & (np.abs(particles["peta"]) <= max_abs_eta)
+        ]
+
+        # Get kwargs output_variables if available
+        output_variables = getattr(self, "output_variables", ["pT", "pz"])
+
+        computed_impact_parameters = getattr(self, "computed_impact_parameters", False)
+        if computed_impact_parameters and not any(
+            impact_parameter in output_variables
+            for impact_parameter in ["d0", "z0", "x_perigee", "y_perigee", "z_perigee"]
+        ):
+            raise ValueError(
+                "computed_impact_parameters is True, but no impact parameters are requested in output_variables."
+            )
+        if (
+            any([var not in particles.columns for var in output_variables])
+            or computed_impact_parameters
+        ):
+            # Add other track parameters
+            if not "qopT" in particles.columns:
+                particles["qopT"] = particles["q"] / particles["pT"]
+            if not "qpT" in particles.columns:
+                particles["qpT"] = particles["q"] * particles["pT"]
+            if not "phi0" in particles.columns:
+                particles["phi0"] = np.arctan2(particles["py"], particles["px"])
+            if (
+                any(
+                    [
+                        var in output_variables
+                        for var in ["d0", "z0", "x_perigee", "y_perigee", "z_perigee"]
+                    ]
+                )
+                or computed_impact_parameters
+            ):
+                (
+                    computed_d0,
+                    computed_z0,
+                    (
+                        particles["x_perigee"],
+                        particles["y_perigee"],
+                        particles["z_perigee"],
+                    ),
+                ) = compute_impact_parameters(
+                    p_x=particles["px"],
+                    p_y=particles["py"],
+                    p_z=particles["pz"],
+                    q=particles["q"],
+                    B=2,
+                    x_v=particles["vx"],
+                    y_v=particles["vy"],
+                    z_v=particles["vz"],
+                    reference_point=(0, 0, 0),
+                )
+                if not "d0" in particles.columns or computed_impact_parameters:
+                    particles["d0"] = computed_d0
+                if not "z0" in particles.columns or computed_impact_parameters:
+                    particles["z0"] = computed_z0
+            if not "ptheta" in particles.columns:
+                particles["ptheta"] = np.arctan2(particles["pT"], particles["pz"])
+
+        return particles
 
     def _preprocess_inputs(self, input_hits):
         zxy = input_hits.values
