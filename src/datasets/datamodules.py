@@ -201,6 +201,9 @@ class RootIterBase(IterBase):
         ]
         super().__init__(dataset_dir, folder, dataset, **kwargs)
         self.available_events = self._event_range()
+        self.available_events = sorted(
+            list(set(int(event) // 100 * 100 for event in self.available_events))
+        )
 
     def _event_range(self):
         # Find the number of events in the ROOT files
@@ -803,7 +806,8 @@ class ActsDatasetProcessing:
         particles = self._preprocess_particles(particles)
 
         # Add Hit_ID to the hits dataframe (index)
-        hits["hit_id"] = hits.index
+        # Group by event_id then assign a hit_id unique per event (restarting from 0 for each event)
+        hits["hit_id"] = hits.groupby("event_id").cumcount()
 
         truth_tracks = getattr(self, "truth_tracks", True)
         track_index = "particle_id"
@@ -829,7 +833,7 @@ class ActsDatasetProcessing:
             # Explode the dataframe
             tracks = tracks.explode("Hits_ID")
             # Keep only Hits_ID, particle_id and track_id
-            tracks = tracks[["Hits_ID", "particle_id", "track_id"]]
+            tracks = tracks[["Hits_ID", "particle_id", "track_id", "event_id"]]
             # Rename Hits_ID to hit_id
             tracks.rename(columns={"Hits_ID": "hit_id"}, inplace=True)
 
@@ -837,7 +841,7 @@ class ActsDatasetProcessing:
             hits = pd.merge(
                 hits,
                 tracks,
-                on=["hit_id"],
+                on=["hit_id", "event_id"],
                 validate="one_to_many",
             )
 
@@ -854,7 +858,9 @@ class ActsDatasetProcessing:
                 console.log(
                     f"[red]Particle ids: {particles[~particles['particle_id'].isin(hits['particle_id'])]['particle_id'].unique()}"
                 )
-        merged_df = pd.merge(hits, particles, on="particle_id", validate="many_to_one")
+        merged_df = pd.merge(
+            hits, particles, on=["particle_id", "event_id"], validate="many_to_one"
+        )
 
         # Get kwargs truth_position if available
         truth_position = getattr(self, "truth_position", True)
@@ -879,7 +885,7 @@ class ActsDatasetProcessing:
             merged_df["r"] = np.sqrt(merged_df["x"] ** 2 + merged_df["y"] ** 2)
             merged_df["phi"] = np.arctan2(merged_df["y"], merged_df["x"])
 
-        grouped = merged_df.groupby(track_index)
+        grouped = merged_df.groupby(["event_id", track_index])
         if verbose:
             print(f"Processing event {self.event}")
             print(f"Number of tracks: {len(grouped)}")
@@ -1143,23 +1149,17 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
 
         with uproot.open(hits) as f:
             hits = convert_tree_to_dataframe(f, keys=list(f.keys())[0])
-        # Keep only the hits with the correct event number
-        hits = hits[hits["event_id"] == event_prefix]
+
         with uproot.open(particles) as f:
             particles = convert_tree_to_dataframe(
-                f, keys=list(f.keys())[0], event_nr=event_prefix % 100
+                f, keys=list(f.keys())[0]
             )
             # print(f"Loaded {particles.shape[0]} particles from {particles}")
 
         # Sanity checks
-        assert (
-            len(hits["event_id"].unique()) == 1
-        ), f"Expected only one event_id in hits, got {hits['event_id'].unique()}"
-        assert (
-            len(particles["event_id"].unique()) == 1
-        ), f"Expected only one event_id in particles, got {particles['event_id'].unique()}"
-        del hits["event_id"]
-        del particles["event_id"]
+        assert len(hits["event_id"].unique()) == len(
+            particles["event_id"].unique()
+        ), f"Mismatch in number of unique event_ids: {len(hits['event_id'].unique())} in hits and {len(particles['event_id'].unique())} in particles"
 
         # Renaming columns
         particles.rename(
