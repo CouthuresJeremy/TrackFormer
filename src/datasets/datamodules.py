@@ -1121,10 +1121,19 @@ class ActsDataset(ActsDatasetProcessing, IterBase):
         tracks = self.path / f"{event_prefix}-{track_file}.csv"
         if getattr(self, "verbose", False):
             print(f"Loading event {event_prefix}")
+        hits_df = pd.read_csv(hits)
+        tracks_df = pd.read_csv(tracks)
+        particles_df = pd.read_csv(particles)
+        if not "event_id" in hits_df.columns:
+            hits_df["event_id"] = event_prefix
+        if not "event_id" in particles_df.columns:
+            particles_df["event_id"] = event_prefix
+        if not "event_id" in tracks_df.columns:
+            tracks_df["event_id"] = event_prefix
         return (
-            pd.read_csv(hits),
-            pd.read_csv(tracks),
-            pd.read_csv(particles),
+            hits_df,
+            tracks_df,
+            particles_df,
         )
 
 
