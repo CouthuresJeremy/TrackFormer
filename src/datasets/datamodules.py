@@ -845,6 +845,29 @@ class ActsDatasetProcessing:
                 validate="one_to_many",
             )
 
+        # Get kwargs truth_position if available
+        truth_position = getattr(self, "truth_position", True)
+        if truth_position:
+            # Override reconstructed position by truth position
+            hits["x"] = hits["tx"]
+            hits["y"] = hits["ty"]
+            hits["z"] = hits["tz"]
+
+        # Get kwargs input_variables if available
+        default_inputs = ["x", "y", "z"]
+        input_variables = getattr(self, "input_variables", default_inputs)
+
+        if (
+            any([var not in hits.columns for var in input_variables])
+            or getattr(self, "sort_by_radius", False)
+            or getattr(self, "cut_scattered", False)
+        ):
+            # Add other coordinate system
+            hits["tr"] = np.sqrt(hits["tx"] ** 2 + hits["ty"] ** 2)
+            hits["tphi"] = np.arctan2(hits["ty"], hits["tx"])
+            hits["r"] = np.sqrt(hits["x"] ** 2 + hits["y"] ** 2)
+            hits["phi"] = np.arctan2(hits["y"], hits["x"])
+
         if verbose:
             # print the number of particles that does not have corresponding hits
             n_particles_without_hits = len(
@@ -858,32 +881,10 @@ class ActsDatasetProcessing:
                 console.log(
                     f"[red]Particle ids: {particles[~particles['particle_id'].isin(hits['particle_id'])]['particle_id'].unique()}"
                 )
+
         merged_df = pd.merge(
             hits, particles, on=["particle_id", "event_id"], validate="many_to_one"
         )
-
-        # Get kwargs truth_position if available
-        truth_position = getattr(self, "truth_position", True)
-        if truth_position:
-            # Override reconstructed position by truth position
-            merged_df["x"] = merged_df["tx"]
-            merged_df["y"] = merged_df["ty"]
-            merged_df["z"] = merged_df["tz"]
-
-        # Get kwargs input_variables if available
-        default_inputs = ["x", "y", "z"]
-        input_variables = getattr(self, "input_variables", default_inputs)
-
-        if (
-            any([var not in merged_df.columns for var in input_variables])
-            or getattr(self, "sort_by_radius", False)
-            or getattr(self, "cut_scattered", False)
-        ):
-            # Add other coordinate system
-            merged_df["tr"] = np.sqrt(merged_df["tx"] ** 2 + merged_df["ty"] ** 2)
-            merged_df["tphi"] = np.arctan2(merged_df["ty"], merged_df["tx"])
-            merged_df["r"] = np.sqrt(merged_df["x"] ** 2 + merged_df["y"] ** 2)
-            merged_df["phi"] = np.arctan2(merged_df["y"], merged_df["x"])
 
         grouped = merged_df.groupby(["event_id", track_index])
         if verbose:
