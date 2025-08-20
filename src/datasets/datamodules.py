@@ -1170,16 +1170,21 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
         self.event = event_prefix
         particle_file = getattr(self, "particle_file", "particles_hits")
         hits_file = getattr(self, "hits_file", "hits")
-        particles = (
-            self.path
-            / f"odd_output_tt_split_start_{event_prefix // 100 * 100}_n_100"
-            / f"{particle_file}.root"
+        particles = self.path.glob(
+            f"*_split_start_{event_prefix // 100 * 100}_n_100/{particle_file}.root"
         )
-        hits = (
-            self.path
-            / f"odd_output_tt_split_start_{event_prefix // 100 * 100}_n_100"
-            / f"{hits_file}.root"
+        hits = self.path.glob(
+            f"*_split_start_{event_prefix // 100 * 100}_n_100/{hits_file}.root"
         )
+        # Ensure we have exactly one file for particles and hits
+        particles = list(particles)
+        hits = list(hits)
+        assert (
+            len(particles) == 1
+        ), f"Expected exactly one particles file, got {len(particles)}"
+        assert len(hits) == 1, f"Expected exactly one hits file, got {len(hits)}"
+        particles = particles[0]
+        hits = hits[0]
 
         import uproot
 
