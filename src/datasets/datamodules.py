@@ -896,6 +896,8 @@ class ActsDatasetProcessing:
             print(f"Processing event {self.event}")
             print(f"Number of tracks: {len(grouped)}")
 
+        output_variables = getattr(self, "output_variables", ["pT", "pz"])
+
         # Get kwargs min_hits if available
         min_hits = getattr(self, "min_hits", 5)
         for group_id, group in grouped:
@@ -981,6 +983,21 @@ class ActsDatasetProcessing:
                 )
                 group["dphi"] = np.where(
                     group["dphi"] < -np.pi, group["dphi"] + 2 * np.pi, group["dphi"]
+                )
+
+            if "dphi0" in output_variables:
+                # Remove phi0 of the first hit
+                group["dphi0"] = group["phi0"] - group["phi"].iloc[0]
+                # Correct for periodicity
+                group["dphi0"] = np.where(
+                    group["dphi0"] > np.pi,
+                    group["dphi0"] - 2 * np.pi,
+                    group["dphi0"],
+                )
+                group["dphi0"] = np.where(
+                    group["dphi0"] < -np.pi,
+                    group["dphi0"] + 2 * np.pi,
+                    group["dphi0"],
                 )
 
             if (
