@@ -1010,6 +1010,7 @@ class ActsDatasetProcessing:
 
     def _preprocess_particles(self, particles):
         # Preprocess the particles dataframe
+        particles = particles.copy()
 
         # Get kwargs particle_types if available
         particle_types = getattr(self, "particle_types", None)
