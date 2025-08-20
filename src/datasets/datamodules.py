@@ -886,6 +886,11 @@ class ActsDatasetProcessing:
             hits, particles, on=["particle_id", "event_id"], validate="many_to_one"
         )
 
+        # Add a variable counting the number of hits per track index
+        merged_df["n_hits_group"] = merged_df.groupby(["event_id", track_index])[
+            "hit_id"
+        ].transform("count")
+
         grouped = merged_df.groupby(["event_id", track_index])
         if verbose:
             print(f"Processing event {self.event}")
@@ -896,6 +901,9 @@ class ActsDatasetProcessing:
         for group_id, group in grouped:
             if verbose:
                 print(f"Processing track {group_id} with {group.shape[0]} hits")
+            assert (
+                group["n_hits_group"].iloc[0] == group.shape[0]
+            ), f"Number of hits {group['n_hits_group'].iloc[0]} does not match the number of hits in the group {group.shape[0]}"
             # Cut tracks with too few hits
             if group.shape[0] < min_hits:
                 if verbose:
