@@ -201,9 +201,6 @@ class RootIterBase(IterBase):
         ]
         super().__init__(dataset_dir, folder, dataset, **kwargs)
         self.available_events = self._event_range()
-        self.available_events = sorted(
-            list(set(int(event) // 100 * 100 for event in self.available_events))
-        )
 
     def _event_range(self):
         # Find the number of events in the ROOT files
@@ -1190,17 +1187,23 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
 
         with uproot.open(hits) as f:
             hits = convert_tree_to_dataframe(f, keys=list(f.keys())[0])
-
+        # Keep only the hits with the correct event number
+        hits = hits[hits["event_id"] == event_prefix]
         with uproot.open(particles) as f:
             particles = convert_tree_to_dataframe(
-                f, keys=list(f.keys())[0]
+                f, keys=list(f.keys())[0], event_nr=event_prefix % 100
             )
             # print(f"Loaded {particles.shape[0]} particles from {particles}")
 
         # Sanity checks
-        assert len(hits["event_id"].unique()) == len(
-            particles["event_id"].unique()
-        ), f"Mismatch in number of unique event_ids: {len(hits['event_id'].unique())} in hits and {len(particles['event_id'].unique())} in particles"
+        assert (
+            len(hits["event_id"].unique()) == 1
+        ), f"Expected only one event_id in hits, got {hits['event_id'].unique()}"
+        assert (
+            len(particles["event_id"].unique()) == 1
+        ), f"Expected only one event_id in particles, got {particles['event_id'].unique()}"
+        del hits["event_id"]
+        del particles["event_id"]
 
         # Renaming columns
         particles.rename(
