@@ -201,6 +201,9 @@ class RootIterBase(IterBase):
         ]
         super().__init__(dataset_dir, folder, dataset, **kwargs)
         self.available_events = self._event_range()
+        self.available_events = sorted(
+            list(set(int(event) // 100 * 100 for event in self.available_events))
+        )
 
     def _event_range(self):
         # Find the number of events in the ROOT files
@@ -240,88 +243,145 @@ class RootIterBase(IterBase):
         raise NotImplementedError
 
 
-def convert_tree_to_dataframe(
-    f, keys, branches_to_load=None, event_nr=None, verbose=False
-):
+def convert_tree_to_dataframe(f, keys, branches_to_load=None, verbose=False):
+    """
+    Build a single DataFrame with rows per (event, sublist, elem)
+    from mixed scalar, single-jagged [event][sublist], and double-jagged
+    [event][sublist][elem] branches.
+
+    Single-jagged fields are repeated (constant) across all elements of
+    their corresponding sublist.
+    """
     import awkward as ak
+    import pandas as pd
+    from collections import OrderedDict
 
     if branches_to_load is None:
         branches_to_load = f[keys].keys()
-    if event_nr is None:
-        ak_array = f[keys].arrays(library="ak", filter_name=branches_to_load)
-    else:
-        ak_array = f[keys].arrays(
-            library="ak",
-            filter_name=branches_to_load,
-            entry_start=event_nr,
-            entry_stop=event_nr + 1,
-        )
+    ak_array = f[keys].arrays(library="ak", filter_name=branches_to_load)
+
     if verbose:
         print("Branch types:")
         for key in ak_array.fields:
             print(f"{key}: {ak.type(ak_array[key])}")
 
-    # Function: keep 100 * var * X (non-nested jagged)
-    def is_single_jagged(array):
-        t = array.type
-        return isinstance(t.content, ak.types.ListType) and not isinstance(
-            t.content.content, ak.types.ListType
-        )
+    # ---------- helpers ----------
+    def jag_depth(t):
+        d = 0
+        cur = getattr(t, "content", None)
+        while isinstance(cur, ak.types.ListType):
+            d += 1
+            cur = getattr(cur, "content", None)
+            if d >= 3:
+                return 3
+        return d
 
-    # Separate fields
-    scalar_fields = {}
-    jagged_fields = {}
+    # ---------- partition ----------
+    scalars = OrderedDict()
+    singles = OrderedDict()  # [event][sublist]
+    doubles = OrderedDict()  # [event][sublist][elem]
 
-    for key in ak_array.fields:
-        if not isinstance(ak_array[key].type.content, ak.types.ListType):
-            scalar_fields[key] = ak_array[key]
-        elif is_single_jagged(ak_array[key]):
-            jagged_fields[key] = ak_array[key]
+    for k in ak_array.fields:
+        t = ak_array[k].type
+        d = jag_depth(t)
+        if d == 0:
+            scalars[k] = ak_array[k]
+        elif d == 1:
+            singles[k] = ak_array[k]
+        elif d == 2:
+            doubles[k] = ak_array[k]
         elif verbose:
-            print(f"Skipping {key}: not a 1D jagged array")
+            print(f"Skipping {k}: jagged depth >= 3 not supported")
 
-    # Stop if no jagged arrays
-    if not jagged_fields:
-        if not scalar_fields:
-            raise RuntimeError(
-                "No 1D jagged branches (100 * var * X) found in the tree."
-            )
+    if not doubles and not singles:
+        if not scalars:
+            raise RuntimeError("No usable branches found.")
         if verbose:
-            print("No jagged arrays found, only scalar fields.")
-        # Convert scalar fields to DataFrame
-        df = pd.DataFrame({k: ak.to_numpy(v) for k, v in scalar_fields.items()})
-        if verbose:
-            print("DataFrame with scalar fields only:")
-            print(df.head())
-            print("DataFrame shape:", df.shape)
-            print("DataFrame columns:", df.columns)
+            print("Only scalar fields found.")
+        df = pd.DataFrame({k: ak.to_numpy(v) for k, v in scalars.items()})
         return df
 
-    # Use one jagged array to determine counts for broadcasting
-    ref_jagged_array = next(iter(jagged_fields.values()))
-    counts = ak.num(ref_jagged_array)
+    if not doubles:
+        # No double-jagged → keep original single-jagged path (1 row per element)
+        ref = next(iter(singles.values()))
+        event_idx = ak.local_index(ref)
+        elem_idx = ak.local_index(ref, axis=1)
+        bcast = ak.broadcast_arrays(ref, *scalars.values()) if scalars else [ref]
+        b_sc = dict(zip(scalars.keys(), bcast[1:])) if scalars else {}
+        zipped = ak.zip(
+            {**singles, **b_sc, "event_idx": event_idx, "elem_idx": elem_idx}
+        )
+        flat = ak.flatten(zipped, axis=1)
+        return pd.DataFrame({k: ak.to_numpy(flat[k]) for k in flat.fields})
+
+    # ---------- merged path with double reference ----------
+    ref_name, ref = next(iter(doubles.items()))
     if verbose:
-        print(f"Counts for jagged arrays: {counts}")
+        print(f"Using '{ref_name}' as reference double-jagged grid.")
 
-    # Reference jagged array
-    ref_jagged_array = next(iter(jagged_fields.values()))
+    # Sanity: single-jagged sublist counts must match ref sublist counts per event
+    ref_sublists_per_event = ak.num(ref, axis=1)  # shape: [events]
+    for k, arr in singles.items():
+        counts = ak.num(arr, axis=1)
+        if not ak.all(counts == ref_sublists_per_event):
+            raise ValueError(
+                f"Single-jagged '{k}' has per-event lengths {counts} that do not "
+                f"match the number of sublists in reference '{ref_name}' ({ref_sublists_per_event}). "
+                "Cannot keep it constant per sublist."
+            )
 
-    # Broadcast scalar fields to jagged shape
-    broadcasted = ak.broadcast_arrays(ref_jagged_array, *scalar_fields.values())
-    broadcasted_scalars = dict(zip(scalar_fields.keys(), broadcasted[1:]))
+    # Broadcast scalars to the ref grid
+    bcast = ak.broadcast_arrays(ref, *scalars.values()) if scalars else [ref]
+    b_scalars = dict(zip(scalars.keys(), bcast[1:])) if scalars else {}
 
-    # Zip and flatten
-    zipped = ak.zip({**broadcasted_scalars, **jagged_fields})
-    flattened = ak.flatten(zipped, axis=1)
+    # Broadcast single-jagged to [event][sublist][elem] by matching outer axes and
+    # repeating across elem within each sublist
+    b_singles = {}
+    for k, arr in singles.items():
+        try:
+            b = ak.broadcast_arrays(ref, arr)[1]
+            b_singles[k] = b
+        except Exception as e:
+            raise ValueError(
+                f"Failed to broadcast single-jagged '{k}' to ref grid: {e}"
+            )
 
-    # To DataFrame
-    df = pd.DataFrame({k: ak.to_numpy(flattened[k]) for k in flattened.fields})
+    # Broadcast other double-jagged fields to the ref grid (drop if incompatible)
+    b_doubles = {ref_name: ref}
+    for k, arr in doubles.items():
+        if k == ref_name:
+            continue
+        try:
+            b = ak.broadcast_arrays(ref, arr)[1]
+            b_doubles[k] = b
+        except Exception as e:
+            print(
+                f"Warning: dropping double-jagged '{k}' (not broadcastable to ref): {e}"
+            )
 
-    # Preview
+    # Indices
+    event_idx = ak.local_index(ref)  # axis=0
+    sublist_idx = ak.local_index(ref, axis=1)  # axis=1
+    elem_idx = ak.local_index(ref, axis=2)  # axis=2
+
+    # Zip everything and flatten two levels → rows per (event, sublist, elem)
+    record = {
+        **b_doubles,
+        **b_singles,  # now constant across elements of the sublist
+        **b_scalars,
+        "event_idx": event_idx,
+        "sublist_idx": sublist_idx,
+        "elem_idx": elem_idx,
+    }
+    zipped = ak.zip(record)
+    flat1 = ak.flatten(zipped, axis=1)
+    flat2 = ak.flatten(flat1, axis=1)
+
+    df = pd.DataFrame({k: ak.to_numpy(flat2[k]) for k in flat2.fields})
     if verbose:
         print(df.head())
-        print("DataFrame shape:", df.shape)
-        print("DataFrame columns:", df.columns)
+        print("Merged DataFrame shape:", df.shape)
+        print("Columns:", df.columns.tolist())
     return df
 
 
@@ -809,38 +869,43 @@ class ActsDatasetProcessing:
         truth_tracks = getattr(self, "truth_tracks", True)
         track_index = "particle_id"
         if not truth_tracks:
-            # Convert particle_id to 64-bit unsigned int
-            tracks["particle_id"] = tracks["particleId"].apply(parse_particle_id)
-            del tracks["particleId"]
-            # Verify that the particle_id is in the particles dataframe
-            if not tracks["particle_id"].isin(particles["particle_id"]).all():
-                raise ValueError(
-                    f"Particle id {len(tracks['particle_id'][~tracks['particle_id'].isin(particles['particle_id'])])} not in particles dataframe"
+            if isinstance(self, ActsDataset):
+                # Convert particle_id to 64-bit unsigned int
+                tracks["particle_id"] = tracks["particleId"].apply(parse_particle_id)
+                del tracks["particleId"]
+                # Verify that the particle_id is in the particles dataframe
+                if not tracks["particle_id"].isin(particles["particle_id"]).all():
+                    raise ValueError(
+                        f"Particle id {len(tracks['particle_id'][~tracks['particle_id'].isin(particles['particle_id'])])} not in particles dataframe"
+                    )
+
+                track_index = "track_id"
+                # Extract the hits from the tracks
+                # Convert "[5747,7769,13699,]" to [5747, 7769, 13699]
+                # Remove the brackets and split by comma
+                tracks["Hits_ID"] = tracks["Hits_ID"].str.strip("[]").str.split(",")
+                # Convert to int
+                tracks["Hits_ID"] = tracks["Hits_ID"].apply(
+                    lambda x: [int(i) for i in x if i]
                 )
+                # Explode the dataframe
+                tracks = tracks.explode("Hits_ID")
+                # Keep only Hits_ID, particle_id and track_id
+                tracks = tracks[["Hits_ID", "particle_id", "track_id", "event_id"]]
+                # Rename Hits_ID to hit_id
+                tracks.rename(columns={"Hits_ID": "hit_id"}, inplace=True)
 
-            track_index = "track_id"
-            # Extract the hits from the tracks
-            # Convert "[5747,7769,13699,]" to [5747, 7769, 13699]
-            # Remove the brackets and split by comma
-            tracks["Hits_ID"] = tracks["Hits_ID"].str.strip("[]").str.split(",")
-            # Convert to int
-            tracks["Hits_ID"] = tracks["Hits_ID"].apply(
-                lambda x: [int(i) for i in x if i]
-            )
-            # Explode the dataframe
-            tracks = tracks.explode("Hits_ID")
-            # Keep only Hits_ID, particle_id and track_id
-            tracks = tracks[["Hits_ID", "particle_id", "track_id", "event_id"]]
-            # Rename Hits_ID to hit_id
-            tracks.rename(columns={"Hits_ID": "hit_id"}, inplace=True)
-
-            # Merge with hits dataframe
-            hits = pd.merge(
-                hits,
-                tracks,
-                on=["hit_id", "event_id"],
-                validate="one_to_many",
-            )
+                # Merge with hits dataframe
+                hits = pd.merge(
+                    hits,
+                    tracks,
+                    on=["hit_id", "event_id"],
+                    validate="one_to_many",
+                )
+            elif isinstance(self, ActsRootDataset):
+                pass
+            else:
+                raise NotImplementedError(f"Dataset {type(self)} not supported")
 
         # Get kwargs truth_position if available
         truth_position = getattr(self, "truth_position", True)
@@ -1163,47 +1228,177 @@ class ActsDataset(ActsDatasetProcessing, IterBase):
 
 class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
 
-    def _load_event(self, event_prefix):
+    def _load_event(self, event_prefix, n_events_split=100):
         self.event = event_prefix
         particle_file = getattr(self, "particle_file", "particles_hits")
         hits_file = getattr(self, "hits_file", "hits")
+        track_hits_file = getattr(self, "track_hits_file", "trackstates_ambi")
+        track_params_file = getattr(self, "track_params_file", "tracksummary_ambi")
+        # particles = self.path / f"{event_prefix}-particles_hits.csv"
         particles = self.path.glob(
-            f"*_split_start_{event_prefix // 100 * 100}_n_100/{particle_file}.root"
+            f"*_split_start_{event_prefix // n_events_split * n_events_split}_n_{n_events_split}/{particle_file}.root"
         )
         hits = self.path.glob(
-            f"*_split_start_{event_prefix // 100 * 100}_n_100/{hits_file}.root"
+            f"*_split_start_{event_prefix // n_events_split * n_events_split}_n_{n_events_split}/{hits_file}.root"
+        )
+        track_hits = self.path.glob(
+            f"*_split_start_{event_prefix // n_events_split * n_events_split}_n_{n_events_split}/{track_hits_file}.root"
+        )
+        track_params = self.path.glob(
+            f"*_split_start_{event_prefix // n_events_split * n_events_split}_n_{n_events_split}/{track_params_file}.root"
         )
         # Ensure we have exactly one file for particles and hits
         particles = list(particles)
         hits = list(hits)
+        track_hits = list(track_hits)
+        track_params = list(track_params)
         assert (
             len(particles) == 1
         ), f"Expected exactly one particles file, got {len(particles)}"
         assert len(hits) == 1, f"Expected exactly one hits file, got {len(hits)}"
+        assert (
+            len(track_hits) == 1
+        ), f"Expected exactly one track hits file, got {len(track_hits)}"
+        assert (
+            len(track_params) == 1
+        ), f"Expected exactly one track params file, got {len(track_params)}"
         particles = particles[0]
         hits = hits[0]
-
+        track_hits = track_hits[0]
+        track_params = track_params[0]
         import uproot
 
         with uproot.open(hits) as f:
             hits = convert_tree_to_dataframe(f, keys=list(f.keys())[0])
-        # Keep only the hits with the correct event number
-        hits = hits[hits["event_id"] == event_prefix]
+
         with uproot.open(particles) as f:
-            particles = convert_tree_to_dataframe(
-                f, keys=list(f.keys())[0], event_nr=event_prefix % 100
-            )
+            particles = convert_tree_to_dataframe(f, keys=list(f.keys())[0])
             # print(f"Loaded {particles.shape[0]} particles from {particles}")
 
-        # Sanity checks
-        assert (
-            len(hits["event_id"].unique()) == 1
-        ), f"Expected only one event_id in hits, got {hits['event_id'].unique()}"
-        assert (
-            len(particles["event_id"].unique()) == 1
-        ), f"Expected only one event_id in particles, got {particles['event_id'].unique()}"
-        del hits["event_id"]
-        del particles["event_id"]
+        with uproot.open(track_params) as f:
+            ########################################
+
+            branches_to_load = [
+                "event_nr",
+                "track_nr",
+                "majorityParticleId",
+                "t_charge",
+                "t_theta",
+                "t_eta",
+                "t_phi",
+                "t_p",
+                "t_d0",
+                "t_z0",
+            ]
+            branches_to_load += [
+                "t_vx",
+                "t_vy",
+                "t_vz",
+                "t_px",
+                "t_py",
+                "t_pz",
+                "t_pT",
+                # "t_time",
+                "trackClassification",
+                "hasFittedParams",
+                "nMajorityHits",
+            ]
+
+            track_particles = convert_tree_to_dataframe(
+                f, keys=list(f.keys())[0], branches_to_load=branches_to_load
+            )
+
+            branches_to_load = [
+                "event_nr",
+                "track_nr",
+                "majorityParticleId",
+                "nMajorityHits",
+                "eLOC0_fit",
+                "eLOC1_fit",
+                "ePHI_fit",
+                "eTHETA_fit",
+                "eQOP_fit",
+                "eT_fit",
+                "hasFittedParams",
+                "nStates",
+                "nMeasurements",
+                "nOutliers",
+                "nHoles",
+                "nSharedHits",
+                "chi2Sum",
+                "NDF",
+            ]
+
+            track_params = convert_tree_to_dataframe(
+                f, keys=list(f.keys())[0], branches_to_load=branches_to_load
+            )
+
+        with uproot.open(track_hits) as f:
+            branches_to_load = [
+                "event_nr",
+                "track_nr",
+                "stateType",
+                "t_x",
+                "t_y",
+                "t_z",
+                "t_dx",
+                "t_dy",
+                "t_dz",
+                "g_x_hit",
+                "g_y_hit",
+                "g_z_hit",
+                "particle_ids",
+            ]
+
+            ########################################
+            track_hits = convert_tree_to_dataframe(
+                f, keys=list(f.keys())[0], branches_to_load=branches_to_load
+            )
+
+        truth_tracks = getattr(self, "truth_tracks", True)
+
+        if not truth_tracks:
+            track_hits.rename(
+                columns={
+                    "event_nr": "event_id",
+                    "track_nr": "track_id",
+                    "particle_ids": "particle_id",
+                    "t_x": "tx",
+                    "t_y": "ty",
+                    "t_z": "tz",
+                },
+                inplace=True,
+            )
+            track_params.rename(
+                columns={
+                    "track_nr": "track_id",
+                    "majorityParticleId": "particle_id",
+                    "event_nr": "event_id",
+                },
+                inplace=True,
+            )
+            track_particles.rename(
+                columns={
+                    "event_nr": "event_id",
+                    "track_nr": "track_id",
+                    "majorityParticleId": "particle_id",
+                },
+                inplace=True,
+            )
+
+        if not truth_tracks:
+            hits = track_hits
+            particles = pd.merge(
+                track_particles,
+                particles,
+                on=["event_id", "particle_id"],
+                # how="inner",
+                how="left",
+                validate="many_to_one",
+            )
+            tracks = track_params
+        else:
+            tracks = pd.DataFrame()
 
         # Renaming columns
         particles.rename(
@@ -1216,11 +1411,22 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
             inplace=True,
         )
 
+        # Sanity checks
+        assert len(hits["event_id"].unique()) == len(
+            particles["event_id"].unique()
+        ), f"Mismatch in number of unique event_ids: {len(hits['event_id'].unique())} in hits and {len(particles['event_id'].unique())} in particles"
+        assert truth_tracks or len(hits["event_id"].unique()) == len(
+            tracks["event_id"].unique()
+        ), f"Mismatch in number of unique event_ids: {len(hits['event_id'].unique())} in hits and {len(tracks['event_id'].unique())} in tracks"
+        assert (
+            len(hits["event_id"].unique()) == n_events_split
+        ), f"Mismatch in number of unique event_ids: {len(hits['event_id'].unique())} in hits and {n_events_split} in split"
+
         if getattr(self, "verbose", False):
             print(f"Loading event {event_prefix}")
         return (
             hits,
-            pd.DataFrame(),
+            tracks,
             particles,
         )
 
