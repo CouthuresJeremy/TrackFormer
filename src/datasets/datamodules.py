@@ -953,6 +953,52 @@ class ActsDatasetProcessing:
             "hit_id"
         ].transform("count")
 
+        # Add custom features
+        if "dphi" in input_variables or "dphi0" in self.output_variables:
+            # Sort by ["event_id", track_index, "r"]
+            merged_df.sort_values(["event_id", track_index, "r"], inplace=True)
+
+            # Get the first hit for each track
+            first_hits = (
+                merged_df.groupby(["event_id", track_index]).first().reset_index()
+            )
+
+            # Add a column "dphi" by subtracting the phi of the first hit of the track to the phi of the hits of the same track
+            merged_df = pd.merge(
+                merged_df,
+                first_hits[["event_id", track_index, "phi"]].rename(
+                    columns={"phi": "phi_offset"}
+                ),
+                on=["event_id", track_index],
+                how="left",
+            )
+        if "dphi" in input_variables:
+            merged_df["dphi"] = merged_df["phi"] - merged_df["phi_offset"]
+            # Correct for periodicity
+            merged_df["dphi"] = np.where(
+                merged_df["dphi"] > np.pi,
+                merged_df["dphi"] - 2 * np.pi,
+                merged_df["dphi"],
+            )
+            merged_df["dphi"] = np.where(
+                merged_df["dphi"] < -np.pi,
+                merged_df["dphi"] + 2 * np.pi,
+                merged_df["dphi"],
+            )
+        if "dphi0" in self.output_variables:
+            merged_df["dphi0"] = merged_df["phi0"] - merged_df["phi_offset"]
+            # Correct for periodicity
+            merged_df["dphi0"] = np.where(
+                merged_df["dphi0"] > np.pi,
+                merged_df["dphi0"] - 2 * np.pi,
+                merged_df["dphi0"],
+            )
+            merged_df["dphi0"] = np.where(
+                merged_df["dphi0"] < -np.pi,
+                merged_df["dphi0"] + 2 * np.pi,
+                merged_df["dphi0"],
+            )
+
         grouped = merged_df.groupby(["event_id", track_index])
         if verbose:
             print(f"Processing event {self.event}")
@@ -1034,33 +1080,6 @@ class ActsDatasetProcessing:
                     group["x"] ** 2 + group["y"] ** 2 + group["z"] ** 2
                 )
                 group = group.sort_values("distance")
-
-            # Add custom features
-            if "dphi" in input_variables:
-                # Remove phi of the first hit
-                group["dphi"] = group["phi"] - group["phi"].iloc[0]
-                # Correct for periodicity
-                group["dphi"] = np.where(
-                    group["dphi"] > np.pi, group["dphi"] - 2 * np.pi, group["dphi"]
-                )
-                group["dphi"] = np.where(
-                    group["dphi"] < -np.pi, group["dphi"] + 2 * np.pi, group["dphi"]
-                )
-
-            if "dphi0" in output_variables:
-                # Remove phi0 of the first hit
-                group["dphi0"] = group["phi0"] - group["phi"].iloc[0]
-                # Correct for periodicity
-                group["dphi0"] = np.where(
-                    group["dphi0"] > np.pi,
-                    group["dphi0"] - 2 * np.pi,
-                    group["dphi0"],
-                )
-                group["dphi0"] = np.where(
-                    group["dphi0"] < -np.pi,
-                    group["dphi0"] + 2 * np.pi,
-                    group["dphi0"],
-                )
 
             if (
                 "pT_circle_estimate" in input_variables
