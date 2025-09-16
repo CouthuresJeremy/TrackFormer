@@ -1251,6 +1251,7 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
         self.event = event_prefix
         particle_file = getattr(self, "particle_file", "particles_hits")
         hits_file = getattr(self, "hits_file", "hits")
+        measurements_file = getattr(self, "measurements_file", "measurements")
         track_hits_file = getattr(self, "track_hits_file", "trackstates_ambi")
         track_params_file = getattr(self, "track_params_file", "tracksummary_ambi")
         # particles = self.path / f"{event_prefix}-particles_hits.csv"
@@ -1259,6 +1260,9 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
         )
         hits = self.path.glob(
             f"*_split_start_{event_prefix // n_events_split * n_events_split}_n_{n_events_split}/{hits_file}.root"
+        )
+        measurements = self.path.glob(
+            f"*_split_start_{event_prefix // n_events_split * n_events_split}_n_{n_events_split}/{measurements_file}.root"
         )
         track_hits = self.path.glob(
             f"*_split_start_{event_prefix // n_events_split * n_events_split}_n_{n_events_split}/{track_hits_file}.root"
@@ -1269,12 +1273,16 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
         # Ensure we have exactly one file for particles and hits
         particles = list(particles)
         hits = list(hits)
+        measurements = list(measurements)
         track_hits = list(track_hits)
         track_params = list(track_params)
         assert (
             len(particles) == 1
         ), f"Expected exactly one particles file, got {len(particles)}"
         assert len(hits) == 1, f"Expected exactly one hits file, got {len(hits)}"
+        assert (
+            len(measurements) == 1
+        ), f"Expected exactly one measurements file, got {len(measurements)}"
         assert (
             len(track_hits) == 1
         ), f"Expected exactly one track hits file, got {len(track_hits)}"
@@ -1283,12 +1291,51 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
         ), f"Expected exactly one track params file, got {len(track_params)}"
         particles = particles[0]
         hits = hits[0]
+        measurements = measurements[0]
         track_hits = track_hits[0]
         track_params = track_params[0]
         import uproot
 
-        with uproot.open(hits) as f:
-            hits = convert_tree_to_dataframe(f, keys=list(f.keys())[0])
+        # Get kwargs truth_position if available
+        truth_position = getattr(self, "truth_position", True)
+        if truth_position:
+            with uproot.open(hits) as f:
+                hits = convert_tree_to_dataframe(f, keys=list(f.keys())[0])
+        else:
+            with uproot.open(measurements) as f:
+                branches_to_load = [
+                    "event_nr",
+                    "particles",
+                    "rec_gx",
+                    "rec_gy",
+                    "rec_gz",
+                    "true_x",
+                    "true_y",
+                    "true_z",
+                    "rec_loc0",
+                    "rec_loc1",
+                    "rec_time",
+                    "var_loc0",
+                    "var_loc1",
+                    "var_time",
+                ]
+                hits = convert_tree_to_dataframe(
+                    f, keys=list(f.keys())[0], branches_to_load=branches_to_load
+                )
+            # Rename some columns to match the truth hits
+            hits.rename(
+                columns={
+                    "rec_gx": "x",
+                    "rec_gy": "y",
+                    "rec_gz": "z",
+                    "true_x": "tx",
+                    "true_y": "ty",
+                    "true_z": "tz",
+                    "particles": "particle_id",
+                    "event_nr": "event_id",
+                },
+                inplace=True,
+            )
 
         with uproot.open(particles) as f:
             particles = convert_tree_to_dataframe(f, keys=list(f.keys())[0])
