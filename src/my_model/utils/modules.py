@@ -230,6 +230,13 @@ class Loss:
             self.loss_fn = self._quantile_loss
         elif "mse" == self.mode:
             self.loss_fn = mse_loss
+        elif "mse_angle" == self.mode:
+            # Use sqrt(2*(1-cos(theta))) instead of angle directly
+            # https://stats.stackexchange.com/a/565057
+            # https://stats.stackexchange.com/a/425270
+            self.loss_fn = lambda preds, targets: torch.mean(
+                torch.sqrt(2 * (1 - torch.cos(preds - targets)))
+            )
         elif "mae" == self.mode:
             self.loss_fn = l1_loss
         elif "mse_inv" == self.mode:
