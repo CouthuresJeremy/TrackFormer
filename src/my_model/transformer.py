@@ -66,6 +66,7 @@ class TrackFormer(BaseModel):
         input_dropout=0.0,
         metric=None,
         positional_encoding=None,
+        norm_loss=None,
     ):
         self.save_hyperparameters()
         super().__init__()

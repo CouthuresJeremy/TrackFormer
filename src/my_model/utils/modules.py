@@ -355,7 +355,21 @@ class BaseModel(L.LightningModule):
         # Separate loss for each parameter
         losses = []
         for i, criterion in enumerate(self.criterion):
-            loss = criterion(preds[:, i].squeeze(), label[:, i].squeeze())
+            preds_i = preds[:, i].squeeze()
+            label_i = label[:, i].squeeze()
+            # Optional normalization of the loss
+            if (
+                hasattr(self.hparams, "norm_loss")
+                and self.hparams.norm_loss is not None
+            ):
+                if self.hparams.norm_loss == "std":
+                    preds_i = preds_i / torch.std(label_i)
+                    label_i = label_i / torch.std(label_i)
+                else:
+                    raise ValueError(
+                        f"Unknown norm_loss method: {self.hparams.norm_loss}"
+                    )
+            loss = criterion(preds_i, label_i)
             losses.append(loss)
             self.log(
                 f"{mode}_loss_param_{i}",

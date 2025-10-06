@@ -17,3 +17,4 @@ model:
       - mse
       - mse
     use_scheduler: True
+    norm_loss: std
