@@ -306,7 +306,15 @@ class BaseModel(L.LightningModule):
 
     def __init__(self):
         super().__init__()
-        self.criterion = Loss(self.hparams.criterion)
+        if isinstance(self.hparams.criterion, str):
+            self.hparams.criterion = [self.hparams.criterion] * self.hparams.num_classes
+        self.criterion = []
+        for criterion in self.hparams.criterion:
+            self.criterion.append(Loss(criterion))
+        assert len(self.criterion) > 0, "At least one criterion must be specified"
+        assert (
+            len(self.criterion) == self.hparams.num_classes
+        ), "Number of criteria must be str or match the number of classes"
         self.metric = Metric(self.hparams.metric) if self.hparams.metric else None
 
     def setup(self, stage=None):
@@ -337,7 +345,20 @@ class BaseModel(L.LightningModule):
         inputs, mask, label = batch
 
         preds = self(inputs, mask=mask)
-        loss = self.criterion(preds.squeeze(), label.squeeze())
+        # Separate loss for each parameter
+        losses = []
+        for i, criterion in enumerate(self.criterion):
+            loss = criterion(preds[:, i].squeeze(), label[:, i].squeeze())
+            losses.append(loss)
+            self.log(
+                f"{mode}_loss_param_{i}",
+                loss,
+                prog_bar=True,
+                logger=False,
+                batch_size=inputs.shape[0],
+            )
+        # Total loss
+        loss = torch.mean(torch.stack(losses))
         self.log(
             f"{mode}_loss",
             loss,
@@ -351,6 +372,11 @@ class BaseModel(L.LightningModule):
         if self.logger and self.global_step % log_every_n_steps == 0:
             # Log loss to TensorBoard
             self.logger.experiment.add_scalars("loss", {mode: loss}, self.global_step)
+            # Add individual losses
+            for i, l in enumerate(losses):
+                self.logger.experiment.add_scalars(
+                    f"loss_param_{i}", {mode: l}, self.global_step
+                )
 
         # Early return
         if self.metric is None:
