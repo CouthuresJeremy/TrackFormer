@@ -379,7 +379,16 @@ class BaseModel(L.LightningModule):
                 batch_size=inputs.shape[0],
             )
         # Total loss
-        loss = torch.mean(torch.stack(losses))
+        if self.hparams.aggregate_loss == "sum":
+            loss = torch.sum(torch.stack(losses))
+        elif self.hparams.aggregate_loss == "mean":
+            loss = torch.mean(torch.stack(losses))
+        elif self.hparams.aggregate_loss == "geometric_mean":
+            loss = torch.prod(torch.stack(losses)) ** (1.0 / len(losses))
+        else:
+            raise ValueError(
+                f"Unknown aggregate loss method: {self.hparams.aggregate_loss}"
+            )
         self.log(
             f"{mode}_loss",
             loss,
