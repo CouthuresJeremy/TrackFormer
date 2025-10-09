@@ -69,6 +69,7 @@ class TrackFormer(BaseModel):
         norm_loss=None,
         aggregate_loss="mean",
     ):
+        # Save all hyperparameters
         self.save_hyperparameters()
         super().__init__()
         self._create_model()
