@@ -92,12 +92,12 @@ class TrackFormer(BaseModel):
             use_rope=self.hparams.positional_encoding == "rope",
         )
 
-        # If positional_encoding is None, no extra layers are added
+        # Positional encoding (RoPE is inside attention if selected)
         if (
             self.hparams.positional_encoding is None
             or self.hparams.positional_encoding == "rope"
         ):
-            self.positional_encoding = None  # RoPE is applied inside attention
+            self.positional_encoding = None
         else:
             self.positional_encoding = PositionalEncoding(
                 self.hparams.model_dim, mode=self.hparams.positional_encoding
