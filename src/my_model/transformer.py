@@ -120,7 +120,12 @@ class TrackFormer(BaseModel):
         if self.positional_encoding is not None:
             x = self.positional_encoding(x)  # Apply positional encoding if not RoPE
         x = self.transformer(x, mask=mask)
+        x = self._pool_sequence(x, mask)  # Pool over sequence length
 
+        x = self.regression_head(x)
+        return x
+
+    def _pool_sequence(self, x, mask):
         # Average pooling over the sequence length dimension (dim=1)
         # If padding is used, this will be impacted by the padding
         if mask is not None:
@@ -137,7 +142,6 @@ class TrackFormer(BaseModel):
         else:
             # If no mask is provided, simply average over the sequence length dimension
             x = x.mean(dim=1)
-        x = self.regression_head(x)
         return x
 
     @torch.no_grad()
