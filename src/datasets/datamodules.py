@@ -1345,6 +1345,88 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
                 hits = convert_tree_to_dataframe(
                     f, keys=list(f.keys())[0], branches_to_load=branches_to_load
                 )
+
+            # expected mapping from elem_idx -> output column name
+            _COLS = {
+                0: "vertex_primary",
+                1: "vertex_secondary",
+                2: "particle",
+                3: "generation",
+                4: "sub_particle",
+            }
+
+            # Choose grouping index (include sublist_idx if it exists)
+            idx_cols = ["event_nr"] + ["event_idx", "sublist_idx"]
+
+            # Pivot rows -> columns
+            wide = (
+                hits.pivot_table(
+                    index=idx_cols,
+                    columns="elem_idx",
+                    values="particles",
+                    aggfunc="first",
+                )
+                .rename(columns=_COLS)
+                .reset_index()
+            )
+
+            # Keep/verify all other columns are constant within each event
+            value_cols = [
+                c
+                for c in hits.columns
+                if c not in (set(idx_cols) | {"particles", "elem_idx"})
+            ]
+
+            if value_cols:
+                nuniques = hits.groupby(idx_cols, dropna=False)[value_cols].nunique(
+                    dropna=False
+                )
+                # Find any columns that vary within a group
+                varying = {
+                    c: nuniques.index[nuniques[c] > 1].tolist()
+                    for c in value_cols
+                    if (nuniques[c] > 1).any()
+                }
+
+                if varying:
+                    raise ValueError(
+                        "Some columns vary within an event and cannot be kept unambiguously: "
+                        + ", ".join(f"{c} (groups: {len(varying[c])})" for c in varying)
+                    )
+
+                # Take the first row per group (since they are constant within the group)
+                meta = (
+                    hits.sort_values(
+                        idx_cols + (["elem_idx"] if "elem_idx" in hits.columns else [])
+                    )
+                    .groupby(idx_cols, as_index=False)[value_cols]
+                    .first()
+                )
+
+                # Merge metadata back onto the pivoted table
+                wide = wide.merge(meta, on=idx_cols, how="left")
+
+            # Final column order (event keys + particle id columns + the rest)
+            particle_cols = list(_COLS.values())
+            other_cols = [
+                c for c in wide.columns if c not in (set(idx_cols) | set(particle_cols))
+            ]
+            wide = wide[idx_cols + particle_cols + other_cols]
+            assert (
+                wide[particle_cols].notna().all().all()
+            ), "NaN values found in particle id columns"
+            # Make sure that the columns in wide are the same as in hits (except for particles, elem_idx, sublist_idx)
+            assert set(wide.columns) == (
+                set(hits.columns) - {"particles", "elem_idx"}
+                | {"sublist_idx"}
+                | set(_COLS.values())
+            ), (
+                "Columns in wide do not match columns in hits"
+                + f" ({wide.columns} vs {hits.columns})"
+            )
+
+            hits = wide
+
             # Rename some columns to match the truth hits
             hits.rename(
                 columns={
@@ -1488,6 +1570,26 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
             tracks = track_params
         else:
             tracks = pd.DataFrame()
+
+        # Combine vertex_primary, vertex_secondary, particle, generation and sub_particle into a single string
+        hits["particle_id"] = hits[
+            [
+                "vertex_primary",
+                "vertex_secondary",
+                "particle",
+                "generation",
+                "sub_particle",
+            ]
+        ].apply(lambda row: "_".join(row.values.astype(str)), axis=1)
+        particles["particle_id"] = particles[
+            [
+                "vertex_primary",
+                "vertex_secondary",
+                "particle",
+                "generation",
+                "sub_particle",
+            ]
+        ].apply(lambda row: "_".join(row.values.astype(str)), axis=1)
 
         # Renaming columns
         particles.rename(
