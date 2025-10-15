@@ -958,20 +958,43 @@ class ActsDatasetProcessing:
             # Sort by ["event_id", track_index, "r"]
             merged_df.sort_values(["event_id", track_index, "r"], inplace=True)
 
-            # Get the first hit for each track
-            first_hits = (
-                merged_df.groupby(["event_id", track_index]).first().reset_index()
-            )
+            # Get kwargs phi_offset if available
+            phi_offset_type = getattr(self, "phi_offset", "first")
+            if phi_offset_type == "first":
+                # Get the first hit for each track
+                first_hits = (
+                    merged_df.groupby(["event_id", track_index]).first().reset_index()
+                )
 
-            # Add a column "dphi" by subtracting the phi of the first hit of the track to the phi of the hits of the same track
-            merged_df = pd.merge(
-                merged_df,
-                first_hits[["event_id", track_index, "phi"]].rename(
-                    columns={"phi": "phi_offset"}
-                ),
-                on=["event_id", track_index],
-                how="left",
-            )
+                # Add a column "dphi" by subtracting the phi of the first hit of the track to the phi of the hits of the same track
+                merged_df = pd.merge(
+                    merged_df,
+                    first_hits[["event_id", track_index, "phi"]].rename(
+                        columns={"phi": "phi_offset"}
+                    ),
+                    on=["event_id", track_index],
+                    how="left",
+                )
+            elif isinstance(phi_offset_type, (int, float)):
+                merged_df["phi_offset"] = float(phi_offset_type)
+            elif phi_offset_type == "min":
+                # Get the minimum phi for each track
+                min_hits = (
+                    merged_df.groupby(["event_id", track_index])["phi"]
+                    .min()
+                    .reset_index()
+                )
+                merged_df = pd.merge(
+                    merged_df,
+                    min_hits.rename(columns={"phi": "phi_offset"}),
+                    on=["event_id", track_index],
+                    how="left",
+                )
+            else:
+                raise ValueError(
+                    f"phi_offset must be 'first', 'min' or a float, got {phi_offset_type}"
+                )
+
         if "dphi" in input_variables:
             merged_df["dphi"] = merged_df["phi"] - merged_df["phi_offset"]
             # Correct for periodicity
