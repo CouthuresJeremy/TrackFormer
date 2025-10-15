@@ -1272,7 +1272,7 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
 
     def _load_event(self, event_prefix, n_events_split=100):
         self.event = event_prefix
-        particle_file = getattr(self, "particle_file", "particles_hits")
+        particle_file = getattr(self, "particle_file", "particles_hits_helix")
         hits_file = getattr(self, "hits_file", "hits")
         measurements_file = getattr(self, "measurements_file", "measurements")
         track_hits_file = getattr(self, "track_hits_file", "trackstates_ambi")
@@ -1554,6 +1554,25 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
                     "track_nr": "track_id",
                     "majorityParticleId": "particle_id",
                 },
+                inplace=True,
+            )
+
+        if any("perigee_" in col for col in particles.columns):
+            console.print(
+                "[yellow]Warning: 'perigee_' columns found in particles dataframe.",
+                style="yellow",
+            )
+            # Force replacement of "perigee_x" variables to "x" in particles
+            # First remove the columns if they exist
+            perigee_cols = [
+                col.replace("perigee_", "")
+                for col in particles.columns
+                if col.startswith("perigee_")
+                and col.replace("perigee_", "") in particles.columns
+            ]
+            particles.drop(columns=perigee_cols, inplace=True)
+            particles.rename(
+                columns={k: k.replace("perigee_", "") for k in particles.columns},
                 inplace=True,
             )
 
