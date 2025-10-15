@@ -360,7 +360,7 @@ def convert_tree_to_dataframe(f, keys, branches_to_load=None, verbose=False):
             )
 
     # Indices
-    event_idx = ak.local_index(ref)  # axis=0
+    event_idx = ak.local_index(ref, axis=0)  # axis=0
     sublist_idx = ak.local_index(ref, axis=1)  # axis=1
     elem_idx = ak.local_index(ref, axis=2)  # axis=2
 
