@@ -1269,7 +1269,11 @@ class ActsDataset(ActsDatasetProcessing, IterBase):
 
 
 def extract_barcode(
-    df: pd.DataFrame, idx_cols: list[str], barcode_col: str, barcode_index_col: str
+    df: pd.DataFrame,
+    idx_cols: list[str],
+    barcode_col: str,
+    barcode_index_col: str,
+    check_constant: bool = False,
 ) -> pd.DataFrame:
     """Extracts the barcode from the particle_id column and adds it as separate columns.
 
@@ -1278,6 +1282,7 @@ def extract_barcode(
         idx_cols (list[str]): List of columns to use as index for pivoting.
         barcode_col (str): Name of the column containing the barcode (particle_id).
         barcode_index_col (str): Name of the column containing the barcode index (elem_idx).
+        check_constant (bool): Whether to check that all other columns are constant within each event.
     """
     # expected mapping from elem_idx -> output column name
     _COLS = {
@@ -1308,19 +1313,21 @@ def extract_barcode(
     ]
 
     if value_cols:
-        nuniques = df.groupby(idx_cols, dropna=False)[value_cols].nunique(dropna=False)
-        # Find any columns that vary within a group
-        varying = {
-            c: nuniques.index[nuniques[c] > 1].tolist()
-            for c in value_cols
-            if (nuniques[c] > 1).any()
-        }
-
-        if varying:
-            raise ValueError(
-                "Some columns vary within an event and cannot be kept unambiguously: "
-                + ", ".join(f"{c} (groups: {len(varying[c])})" for c in varying)
+        if check_constant:
+            # Check that all value_cols are constant within each group
+            nunique = df.groupby(idx_cols, dropna=False)[value_cols].nunique(
+                dropna=False
             )
+            varying = {
+                c: nunique.index[nunique[c] > 1].tolist()
+                for c in value_cols
+                if (nunique[c] > 1).any()
+            }
+            if varying:
+                raise ValueError(
+                    "Some columns vary within an event and cannot be kept unambiguously: "
+                    + ", ".join(f"{c} (groups: {len(varying[c])})" for c in varying)
+                )
 
         # Take the first row per group (since they are constant within the group)
         meta = (
