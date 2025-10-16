@@ -1268,6 +1268,92 @@ class ActsDataset(ActsDatasetProcessing, IterBase):
         )
 
 
+def extract_barcode(
+    df: pd.DataFrame, idx_cols: list[str], barcode_col: str, barcode_index_col: str
+) -> pd.DataFrame:
+    """Extracts the barcode from the particle_id column and adds it as separate columns.
+
+    Args:
+        df (pd.DataFrame): Dataframe containing a particle_id column.
+        idx_cols (list[str]): List of columns to use as index for pivoting.
+        barcode_col (str): Name of the column containing the barcode (particle_id).
+        barcode_index_col (str): Name of the column containing the barcode index (elem_idx).
+    """
+    # expected mapping from elem_idx -> output column name
+    _COLS = {
+        0: "vertex_primary",
+        1: "vertex_secondary",
+        2: "particle",
+        3: "generation",
+        4: "sub_particle",
+    }
+
+    # Pivot rows -> columns
+    wide = (
+        df.pivot_table(
+            index=idx_cols,
+            columns=barcode_index_col,
+            values=barcode_col,
+            aggfunc="first",
+        )
+        .rename(columns=_COLS)
+        .reset_index()
+    )
+
+    # Keep/verify all other columns are constant within each event
+    value_cols = [
+        c
+        for c in df.columns
+        if c not in (set(idx_cols) | {barcode_col, barcode_index_col})
+    ]
+
+    if value_cols:
+        nuniques = df.groupby(idx_cols, dropna=False)[value_cols].nunique(dropna=False)
+        # Find any columns that vary within a group
+        varying = {
+            c: nuniques.index[nuniques[c] > 1].tolist()
+            for c in value_cols
+            if (nuniques[c] > 1).any()
+        }
+
+        if varying:
+            raise ValueError(
+                "Some columns vary within an event and cannot be kept unambiguously: "
+                + ", ".join(f"{c} (groups: {len(varying[c])})" for c in varying)
+            )
+
+        # Take the first row per group (since they are constant within the group)
+        meta = (
+            df.sort_values(
+                idx_cols
+                + ([barcode_index_col] if barcode_index_col in df.columns else [])
+            )
+            .groupby(idx_cols, as_index=False)[value_cols]
+            .first()
+        )
+
+        # Merge metadata back onto the pivoted table
+        wide = wide.merge(meta, on=idx_cols, how="left")
+
+    # Final column order (event keys + particle id columns + the rest)
+    particle_cols = list(_COLS.values())
+    other_cols = [
+        c for c in wide.columns if c not in (set(idx_cols) | set(particle_cols))
+    ]
+    wide = wide[idx_cols + particle_cols + other_cols]
+    assert (
+        wide[particle_cols].notna().all().all()
+    ), "NaN values found in particle id columns"
+    # Make sure that the columns in wide are the same as in df (except for barcode_col, barcode_index_col)
+    assert set(wide.columns) == (
+        set(df.columns) - {barcode_col, barcode_index_col} | set(_COLS.values())
+    ), (
+        "Columns in wide do not match columns in df"
+        + f" ({wide.columns} vs {df.columns})"
+    )
+    return wide
+
+
 class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
 
     def _load_event(self, event_prefix, n_events_split=100):
@@ -1352,6 +1438,13 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
             if truth_position:
                 with uproot.open(hits) as f:
                     hits = convert_tree_to_dataframe(f, keys=list(f.keys())[0])
+
+                hits = extract_barcode(
+                    hits,
+                    idx_cols=["event_id"] + ["event_idx"],
+                    barcode_col="barcode",
+                    barcode_index_col="elem_idx",
+                )
             else:
                 with uproot.open(measurements) as f:
                     branches_to_load = [
@@ -1389,91 +1482,12 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
                     inplace=True,
                 )
 
-                # expected mapping from elem_idx -> output column name
-                _COLS = {
-                    0: "vertex_primary",
-                    1: "vertex_secondary",
-                    2: "particle",
-                    3: "generation",
-                    4: "sub_particle",
-                }
-
-                # Choose grouping index (include sublist_idx if it exists)
-                idx_cols = ["event_id"] + ["event_idx", "sublist_idx"]
-
-                # Pivot rows -> columns
-                wide = (
-                    hits.pivot_table(
-                        index=idx_cols,
-                        columns="elem_idx",
-                        values="barcodes",
-                        aggfunc="first",
-                    )
-                    .rename(columns=_COLS)
-                    .reset_index()
+                hits = extract_barcode(
+                    hits,
+                    idx_cols=["event_id"] + ["event_idx", "sublist_idx"],
+                    barcode_col="barcodes",
+                    barcode_index_col="elem_idx",
                 )
-
-                # Keep/verify all other columns are constant within each event
-                value_cols = [
-                    c
-                    for c in hits.columns
-                    if c not in (set(idx_cols) | {"barcodes", "elem_idx"})
-                ]
-
-                if value_cols:
-                    nuniques = hits.groupby(idx_cols, dropna=False)[value_cols].nunique(
-                        dropna=False
-                    )
-                    # Find any columns that vary within a group
-                    varying = {
-                        c: nuniques.index[nuniques[c] > 1].tolist()
-                        for c in value_cols
-                        if (nuniques[c] > 1).any()
-                    }
-
-                    if varying:
-                        raise ValueError(
-                            "Some columns vary within an event and cannot be kept unambiguously: "
-                            + ", ".join(
-                                f"{c} (groups: {len(varying[c])})" for c in varying
-                            )
-                        )
-
-                    # Take the first row per group (since they are constant within the group)
-                    meta = (
-                        hits.sort_values(
-                            idx_cols
-                            + (["elem_idx"] if "elem_idx" in hits.columns else [])
-                        )
-                        .groupby(idx_cols, as_index=False)[value_cols]
-                        .first()
-                    )
-
-                    # Merge metadata back onto the pivoted table
-                    wide = wide.merge(meta, on=idx_cols, how="left")
-
-                # Final column order (event keys + particle id columns + the rest)
-                particle_cols = list(_COLS.values())
-                other_cols = [
-                    c
-                    for c in wide.columns
-                    if c not in (set(idx_cols) | set(particle_cols))
-                ]
-                wide = wide[idx_cols + particle_cols + other_cols]
-                assert (
-                    wide[particle_cols].notna().all().all()
-                ), "NaN values found in particle id columns"
-                # Make sure that the columns in wide are the same as in hits (except for barcodes, elem_idx, sublist_idx)
-                assert set(wide.columns) == (
-                    set(hits.columns) - {"barcodes", "elem_idx"}
-                    | {"sublist_idx"}
-                    | set(_COLS.values())
-                ), (
-                    "Columns in wide do not match columns in hits"
-                    + f" ({wide.columns} vs {hits.columns})"
-                )
-
-                hits = wide
 
         else:
 
@@ -1510,6 +1524,12 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
                     f, keys=list(f.keys())[0], branches_to_load=branches_to_load
                 )
 
+                track_particles = extract_barcode(
+                    track_particles,
+                    idx_cols=["event_nr"] + ["event_idx", "sublist_idx"],
+                    barcode_col="majorityParticleId",
+                    barcode_index_col="elem_idx",
+                )
                 branches_to_load = [
                     "event_nr",
                     "track_nr",
@@ -1535,6 +1555,13 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
                     f, keys=list(f.keys())[0], branches_to_load=branches_to_load
                 )
 
+                track_params = extract_barcode(
+                    track_params,
+                    idx_cols=["event_nr"] + ["event_idx", "sublist_idx"],
+                    barcode_col="majorityParticleId",
+                    barcode_index_col="elem_idx",
+                )
+
             with uproot.open(track_hits) as f:
                 branches_to_load = [
                     "event_nr",
@@ -1549,7 +1576,7 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
                     "g_x_hit",
                     "g_y_hit",
                     "g_z_hit",
-                    "particle_ids",
+                    # "particle_ids",  # missing in v44.0.0
                 ]
 
                 ########################################
@@ -1563,7 +1590,6 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
                 columns={
                     "event_nr": "event_id",
                     "track_nr": "track_id",
-                    "particle_ids": "particle_id",
                     "t_x": "tx",
                     "t_y": "ty",
                     "t_z": "tz",
@@ -1574,7 +1600,6 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
                 columns={
                     "event_nr": "event_id",
                     "track_nr": "track_id",
-                    "majorityParticleId": "particle_id",
                 },
                 inplace=True,
             )
@@ -1582,12 +1607,58 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
                 columns={
                     "event_nr": "event_id",
                     "track_nr": "track_id",
-                    "majorityParticleId": "particle_id",
                 },
                 inplace=True,
             )
 
             hits = track_hits
+            if all(
+                col in track_particles.columns
+                for col in [
+                    "vertex_primary",
+                    "vertex_secondary",
+                    "particle",
+                    "generation",
+                    "sub_particle",
+                ]
+            ):
+                # Combine vertex_primary, vertex_secondary, particle, generation and sub_particle into a single string
+                track_particles["particle_id"] = track_particles[
+                    [
+                        "vertex_primary",
+                        "vertex_secondary",
+                        "particle",
+                        "generation",
+                        "sub_particle",
+                    ]
+                ].apply(lambda row: "_".join(row.values.astype(str)), axis=1)
+                track_params["particle_id"] = track_params[
+                    [
+                        "vertex_primary",
+                        "vertex_secondary",
+                        "particle",
+                        "generation",
+                        "sub_particle",
+                    ]
+                ].apply(lambda row: "_".join(row.values.astype(str)), axis=1)
+                particles["particle_id"] = particles[
+                    [
+                        "vertex_primary",
+                        "vertex_secondary",
+                        "particle",
+                        "generation",
+                        "sub_particle",
+                    ]
+                ].apply(lambda row: "_".join(row.values.astype(str)), axis=1)
+                if not "particle_id" in hits:
+                    # Use the particle_id of track_particles with matching event_id and track_id
+                    hits["particle_id"] = hits.merge(
+                        track_particles[["event_id", "track_id", "particle_id"]],
+                        on=["event_id", "track_id"],
+                        how="left",
+                        validate="many_to_one",
+                    )["particle_id"]
+
             particles = pd.merge(
                 track_particles,
                 particles,
@@ -1598,25 +1669,35 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
             )
             tracks = track_params
 
-        # Combine vertex_primary, vertex_secondary, particle, generation and sub_particle into a single string
-        hits["particle_id"] = hits[
-            [
+        if all(
+            col in hits.columns
+            for col in [
                 "vertex_primary",
                 "vertex_secondary",
                 "particle",
                 "generation",
                 "sub_particle",
             ]
-        ].apply(lambda row: "_".join(row.values.astype(str)), axis=1)
-        particles["particle_id"] = particles[
-            [
-                "vertex_primary",
-                "vertex_secondary",
-                "particle",
-                "generation",
-                "sub_particle",
-            ]
-        ].apply(lambda row: "_".join(row.values.astype(str)), axis=1)
+        ):
+            # Combine vertex_primary, vertex_secondary, particle, generation and sub_particle into a single string
+            hits["particle_id"] = hits[
+                [
+                    "vertex_primary",
+                    "vertex_secondary",
+                    "particle",
+                    "generation",
+                    "sub_particle",
+                ]
+            ].apply(lambda row: "_".join(row.values.astype(str)), axis=1)
+            particles["particle_id"] = particles[
+                [
+                    "vertex_primary",
+                    "vertex_secondary",
+                    "particle",
+                    "generation",
+                    "sub_particle",
+                ]
+            ].apply(lambda row: "_".join(row.values.astype(str)), axis=1)
 
         # Renaming columns
         particles.rename(
