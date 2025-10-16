@@ -182,8 +182,13 @@ class IterBase(IterableDataset, ABC):
             iter_start = worker_id * per_worker
             iter_end = min(iter_start + per_worker, total_events)
 
+        n_event_split = getattr(self, "n_events_split", None)
+
         for i in range(iter_start, iter_end):
-            event_files = self._load_event(self.available_events[i])
+            if n_event_split is None:
+                event_files = self._load_event(self.available_events[i])
+            else:
+                event_files = self._load_event(self.available_events[i], n_event_split)
             processed_data = self._preprocessor(event_files)
             yield from processed_data
 
@@ -231,6 +236,14 @@ class RootIterBase(IterBase):
                 ), "Expected event number key to be 'event_nr', found: {}".format(
                     event_number_key
                 )
+                if hasattr(self, "n_events_split"):
+                    assert self.n_events_split == len(
+                        f[keys][event_number_key].array().tolist()
+                    ), "Expected number of events to be {}, found: {}".format(
+                        self.n_events_split,
+                        len(f[keys][event_number_key].array().tolist()),
+                    )
+                self.n_events_split = len(f[keys][event_number_key].array().tolist())
                 event_numbers.extend(f[keys][event_number_key].array().tolist())
         return sorted(list(set(event_numbers)))
 
