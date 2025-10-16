@@ -1319,6 +1319,30 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
         track_params = track_params[0]
         import uproot
 
+        # Load particles
+        with uproot.open(particles) as f:
+            particles = convert_tree_to_dataframe(f, keys=list(f.keys())[0])
+
+        if any("perigee_" in col for col in particles.columns):
+            console.print(
+                "[yellow]Warning: 'perigee_' columns found in particles dataframe.",
+                style="yellow",
+            )
+            # Force replacement of "perigee_x" variables to "x" in particles
+            # First remove the columns if they exist
+            perigee_cols = [
+                col.replace("perigee_", "")
+                for col in particles.columns
+                if col.startswith("perigee_")
+                and col.replace("perigee_", "") in particles.columns
+            ]
+            particles.drop(columns=perigee_cols, inplace=True)
+            particles.rename(
+                columns={k: k.replace("perigee_", "") for k in particles.columns},
+                inplace=True,
+            )
+
+        # Load hits
         # Get kwargs truth_position if available
         truth_position = getattr(self, "truth_position", True)
         if truth_position:
@@ -1442,10 +1466,6 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
                 inplace=True,
             )
 
-        with uproot.open(particles) as f:
-            particles = convert_tree_to_dataframe(f, keys=list(f.keys())[0])
-            # print(f"Loaded {particles.shape[0]} particles from {particles}")
-
         with uproot.open(track_params) as f:
             ########################################
 
@@ -1554,25 +1574,6 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
                     "track_nr": "track_id",
                     "majorityParticleId": "particle_id",
                 },
-                inplace=True,
-            )
-
-        if any("perigee_" in col for col in particles.columns):
-            console.print(
-                "[yellow]Warning: 'perigee_' columns found in particles dataframe.",
-                style="yellow",
-            )
-            # Force replacement of "perigee_x" variables to "x" in particles
-            # First remove the columns if they exist
-            perigee_cols = [
-                col.replace("perigee_", "")
-                for col in particles.columns
-                if col.startswith("perigee_")
-                and col.replace("perigee_", "") in particles.columns
-            ]
-            particles.drop(columns=perigee_cols, inplace=True)
-            particles.rename(
-                columns={k: k.replace("perigee_", "") for k in particles.columns},
                 inplace=True,
             )
 
