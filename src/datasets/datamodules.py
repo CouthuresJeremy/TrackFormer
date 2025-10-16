@@ -1343,212 +1343,222 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
             )
 
         # Load hits
-        # Get kwargs truth_position if available
-        truth_position = getattr(self, "truth_position", True)
-        if truth_position:
-            with uproot.open(hits) as f:
-                hits = convert_tree_to_dataframe(f, keys=list(f.keys())[0])
+        truth_tracks = getattr(self, "truth_tracks", True)
+        if truth_tracks:
+            tracks = pd.DataFrame()
+
+            # Get kwargs truth_position if available
+            truth_position = getattr(self, "truth_position", True)
+            if truth_position:
+                with uproot.open(hits) as f:
+                    hits = convert_tree_to_dataframe(f, keys=list(f.keys())[0])
+            else:
+                with uproot.open(measurements) as f:
+                    branches_to_load = [
+                        "event_nr",
+                        "particles",
+                        "rec_gx",
+                        "rec_gy",
+                        "rec_gz",
+                        "true_x",
+                        "true_y",
+                        "true_z",
+                        "rec_loc0",
+                        "rec_loc1",
+                        "rec_time",
+                        "var_loc0",
+                        "var_loc1",
+                        "var_time",
+                    ]
+                    hits = convert_tree_to_dataframe(
+                        f, keys=list(f.keys())[0], branches_to_load=branches_to_load
+                    )
+
+                # expected mapping from elem_idx -> output column name
+                _COLS = {
+                    0: "vertex_primary",
+                    1: "vertex_secondary",
+                    2: "particle",
+                    3: "generation",
+                    4: "sub_particle",
+                }
+
+                # Choose grouping index (include sublist_idx if it exists)
+                idx_cols = ["event_nr"] + ["event_idx", "sublist_idx"]
+
+                # Pivot rows -> columns
+                wide = (
+                    hits.pivot_table(
+                        index=idx_cols,
+                        columns="elem_idx",
+                        values="particles",
+                        aggfunc="first",
+                    )
+                    .rename(columns=_COLS)
+                    .reset_index()
+                )
+
+                # Keep/verify all other columns are constant within each event
+                value_cols = [
+                    c
+                    for c in hits.columns
+                    if c not in (set(idx_cols) | {"particles", "elem_idx"})
+                ]
+
+                if value_cols:
+                    nuniques = hits.groupby(idx_cols, dropna=False)[value_cols].nunique(
+                        dropna=False
+                    )
+                    # Find any columns that vary within a group
+                    varying = {
+                        c: nuniques.index[nuniques[c] > 1].tolist()
+                        for c in value_cols
+                        if (nuniques[c] > 1).any()
+                    }
+
+                    if varying:
+                        raise ValueError(
+                            "Some columns vary within an event and cannot be kept unambiguously: "
+                            + ", ".join(
+                                f"{c} (groups: {len(varying[c])})" for c in varying
+                            )
+                        )
+
+                    # Take the first row per group (since they are constant within the group)
+                    meta = (
+                        hits.sort_values(
+                            idx_cols
+                            + (["elem_idx"] if "elem_idx" in hits.columns else [])
+                        )
+                        .groupby(idx_cols, as_index=False)[value_cols]
+                        .first()
+                    )
+
+                    # Merge metadata back onto the pivoted table
+                    wide = wide.merge(meta, on=idx_cols, how="left")
+
+                # Final column order (event keys + particle id columns + the rest)
+                particle_cols = list(_COLS.values())
+                other_cols = [
+                    c
+                    for c in wide.columns
+                    if c not in (set(idx_cols) | set(particle_cols))
+                ]
+                wide = wide[idx_cols + particle_cols + other_cols]
+                assert (
+                    wide[particle_cols].notna().all().all()
+                ), "NaN values found in particle id columns"
+                # Make sure that the columns in wide are the same as in hits (except for particles, elem_idx, sublist_idx)
+                assert set(wide.columns) == (
+                    set(hits.columns) - {"particles", "elem_idx"}
+                    | {"sublist_idx"}
+                    | set(_COLS.values())
+                ), (
+                    "Columns in wide do not match columns in hits"
+                    + f" ({wide.columns} vs {hits.columns})"
+                )
+
+                hits = wide
+
+                # Rename some columns to match the truth hits
+                hits.rename(
+                    columns={
+                        "rec_gx": "x",
+                        "rec_gy": "y",
+                        "rec_gz": "z",
+                        "true_x": "tx",
+                        "true_y": "ty",
+                        "true_z": "tz",
+                        "particles": "particle_id",
+                        "event_nr": "event_id",
+                    },
+                    inplace=True,
+                )
+
         else:
-            with uproot.open(measurements) as f:
+
+            with uproot.open(track_params) as f:
+                ########################################
+
                 branches_to_load = [
                     "event_nr",
-                    "particles",
-                    "rec_gx",
-                    "rec_gy",
-                    "rec_gz",
-                    "true_x",
-                    "true_y",
-                    "true_z",
-                    "rec_loc0",
-                    "rec_loc1",
-                    "rec_time",
-                    "var_loc0",
-                    "var_loc1",
-                    "var_time",
+                    "track_nr",
+                    "majorityParticleId",
+                    "t_charge",
+                    "t_theta",
+                    "t_eta",
+                    "t_phi",
+                    "t_p",
+                    "t_d0",
+                    "t_z0",
                 ]
-                hits = convert_tree_to_dataframe(
+                branches_to_load += [
+                    "t_vx",
+                    "t_vy",
+                    "t_vz",
+                    "t_px",
+                    "t_py",
+                    "t_pz",
+                    "t_pT",
+                    # "t_time",
+                    "trackClassification",
+                    "hasFittedParams",
+                    "nMajorityHits",
+                ]
+
+                track_particles = convert_tree_to_dataframe(
                     f, keys=list(f.keys())[0], branches_to_load=branches_to_load
                 )
 
-            # expected mapping from elem_idx -> output column name
-            _COLS = {
-                0: "vertex_primary",
-                1: "vertex_secondary",
-                2: "particle",
-                3: "generation",
-                4: "sub_particle",
-            }
+                branches_to_load = [
+                    "event_nr",
+                    "track_nr",
+                    "majorityParticleId",
+                    "nMajorityHits",
+                    "eLOC0_fit",
+                    "eLOC1_fit",
+                    "ePHI_fit",
+                    "eTHETA_fit",
+                    "eQOP_fit",
+                    "eT_fit",
+                    "hasFittedParams",
+                    "nStates",
+                    "nMeasurements",
+                    "nOutliers",
+                    "nHoles",
+                    "nSharedHits",
+                    "chi2Sum",
+                    "NDF",
+                ]
 
-            # Choose grouping index (include sublist_idx if it exists)
-            idx_cols = ["event_nr"] + ["event_idx", "sublist_idx"]
-
-            # Pivot rows -> columns
-            wide = (
-                hits.pivot_table(
-                    index=idx_cols,
-                    columns="elem_idx",
-                    values="particles",
-                    aggfunc="first",
-                )
-                .rename(columns=_COLS)
-                .reset_index()
-            )
-
-            # Keep/verify all other columns are constant within each event
-            value_cols = [
-                c
-                for c in hits.columns
-                if c not in (set(idx_cols) | {"particles", "elem_idx"})
-            ]
-
-            if value_cols:
-                nuniques = hits.groupby(idx_cols, dropna=False)[value_cols].nunique(
-                    dropna=False
-                )
-                # Find any columns that vary within a group
-                varying = {
-                    c: nuniques.index[nuniques[c] > 1].tolist()
-                    for c in value_cols
-                    if (nuniques[c] > 1).any()
-                }
-
-                if varying:
-                    raise ValueError(
-                        "Some columns vary within an event and cannot be kept unambiguously: "
-                        + ", ".join(f"{c} (groups: {len(varying[c])})" for c in varying)
-                    )
-
-                # Take the first row per group (since they are constant within the group)
-                meta = (
-                    hits.sort_values(
-                        idx_cols + (["elem_idx"] if "elem_idx" in hits.columns else [])
-                    )
-                    .groupby(idx_cols, as_index=False)[value_cols]
-                    .first()
+                track_params = convert_tree_to_dataframe(
+                    f, keys=list(f.keys())[0], branches_to_load=branches_to_load
                 )
 
-                # Merge metadata back onto the pivoted table
-                wide = wide.merge(meta, on=idx_cols, how="left")
+            with uproot.open(track_hits) as f:
+                branches_to_load = [
+                    "event_nr",
+                    "track_nr",
+                    "stateType",
+                    "t_x",
+                    "t_y",
+                    "t_z",
+                    "t_dx",
+                    "t_dy",
+                    "t_dz",
+                    "g_x_hit",
+                    "g_y_hit",
+                    "g_z_hit",
+                    "particle_ids",
+                ]
 
-            # Final column order (event keys + particle id columns + the rest)
-            particle_cols = list(_COLS.values())
-            other_cols = [
-                c for c in wide.columns if c not in (set(idx_cols) | set(particle_cols))
-            ]
-            wide = wide[idx_cols + particle_cols + other_cols]
-            assert (
-                wide[particle_cols].notna().all().all()
-            ), "NaN values found in particle id columns"
-            # Make sure that the columns in wide are the same as in hits (except for particles, elem_idx, sublist_idx)
-            assert set(wide.columns) == (
-                set(hits.columns) - {"particles", "elem_idx"}
-                | {"sublist_idx"}
-                | set(_COLS.values())
-            ), (
-                "Columns in wide do not match columns in hits"
-                + f" ({wide.columns} vs {hits.columns})"
-            )
+                ########################################
+                track_hits = convert_tree_to_dataframe(
+                    f,
+                    keys=list(f.keys())[0],
+                    branches_to_load=branches_to_load,
+                )
 
-            hits = wide
-
-            # Rename some columns to match the truth hits
-            hits.rename(
-                columns={
-                    "rec_gx": "x",
-                    "rec_gy": "y",
-                    "rec_gz": "z",
-                    "true_x": "tx",
-                    "true_y": "ty",
-                    "true_z": "tz",
-                    "particles": "particle_id",
-                    "event_nr": "event_id",
-                },
-                inplace=True,
-            )
-
-        with uproot.open(track_params) as f:
-            ########################################
-
-            branches_to_load = [
-                "event_nr",
-                "track_nr",
-                "majorityParticleId",
-                "t_charge",
-                "t_theta",
-                "t_eta",
-                "t_phi",
-                "t_p",
-                "t_d0",
-                "t_z0",
-            ]
-            branches_to_load += [
-                "t_vx",
-                "t_vy",
-                "t_vz",
-                "t_px",
-                "t_py",
-                "t_pz",
-                "t_pT",
-                # "t_time",
-                "trackClassification",
-                "hasFittedParams",
-                "nMajorityHits",
-            ]
-
-            track_particles = convert_tree_to_dataframe(
-                f, keys=list(f.keys())[0], branches_to_load=branches_to_load
-            )
-
-            branches_to_load = [
-                "event_nr",
-                "track_nr",
-                "majorityParticleId",
-                "nMajorityHits",
-                "eLOC0_fit",
-                "eLOC1_fit",
-                "ePHI_fit",
-                "eTHETA_fit",
-                "eQOP_fit",
-                "eT_fit",
-                "hasFittedParams",
-                "nStates",
-                "nMeasurements",
-                "nOutliers",
-                "nHoles",
-                "nSharedHits",
-                "chi2Sum",
-                "NDF",
-            ]
-
-            track_params = convert_tree_to_dataframe(
-                f, keys=list(f.keys())[0], branches_to_load=branches_to_load
-            )
-
-        with uproot.open(track_hits) as f:
-            branches_to_load = [
-                "event_nr",
-                "track_nr",
-                "stateType",
-                "t_x",
-                "t_y",
-                "t_z",
-                "t_dx",
-                "t_dy",
-                "t_dz",
-                "g_x_hit",
-                "g_y_hit",
-                "g_z_hit",
-                "particle_ids",
-            ]
-
-            ########################################
-            track_hits = convert_tree_to_dataframe(
-                f, keys=list(f.keys())[0], branches_to_load=branches_to_load
-            )
-
-        truth_tracks = getattr(self, "truth_tracks", True)
-
-        if not truth_tracks:
             track_hits.rename(
                 columns={
                     "event_nr": "event_id",
@@ -1577,7 +1587,6 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
                 inplace=True,
             )
 
-        if not truth_tracks:
             hits = track_hits
             particles = pd.merge(
                 track_particles,
@@ -1588,8 +1597,6 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
                 validate="many_to_one",
             )
             tracks = track_params
-        else:
-            tracks = pd.DataFrame()
 
         # Combine vertex_primary, vertex_secondary, particle, generation and sub_particle into a single string
         hits["particle_id"] = hits[
