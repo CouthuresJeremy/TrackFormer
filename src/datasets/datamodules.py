@@ -1542,9 +1542,9 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
             )
             track_params.rename(
                 columns={
+                    "event_nr": "event_id",
                     "track_nr": "track_id",
                     "majorityParticleId": "particle_id",
-                    "event_nr": "event_id",
                 },
                 inplace=True,
             )
