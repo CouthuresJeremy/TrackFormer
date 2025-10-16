@@ -1374,6 +1374,21 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
                         f, keys=list(f.keys())[0], branches_to_load=branches_to_load
                     )
 
+                # Rename some columns to match the truth hits
+                hits.rename(
+                    columns={
+                        "rec_gx": "x",
+                        "rec_gy": "y",
+                        "rec_gz": "z",
+                        "true_x": "tx",
+                        "true_y": "ty",
+                        "true_z": "tz",
+                        "particles": "barcodes",
+                        "event_nr": "event_id",
+                    },
+                    inplace=True,
+                )
+
                 # expected mapping from elem_idx -> output column name
                 _COLS = {
                     0: "vertex_primary",
@@ -1384,14 +1399,14 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
                 }
 
                 # Choose grouping index (include sublist_idx if it exists)
-                idx_cols = ["event_nr"] + ["event_idx", "sublist_idx"]
+                idx_cols = ["event_id"] + ["event_idx", "sublist_idx"]
 
                 # Pivot rows -> columns
                 wide = (
                     hits.pivot_table(
                         index=idx_cols,
                         columns="elem_idx",
-                        values="particles",
+                        values="barcodes",
                         aggfunc="first",
                     )
                     .rename(columns=_COLS)
@@ -1402,7 +1417,7 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
                 value_cols = [
                     c
                     for c in hits.columns
-                    if c not in (set(idx_cols) | {"particles", "elem_idx"})
+                    if c not in (set(idx_cols) | {"barcodes", "elem_idx"})
                 ]
 
                 if value_cols:
@@ -1448,9 +1463,9 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
                 assert (
                     wide[particle_cols].notna().all().all()
                 ), "NaN values found in particle id columns"
-                # Make sure that the columns in wide are the same as in hits (except for particles, elem_idx, sublist_idx)
+                # Make sure that the columns in wide are the same as in hits (except for barcodes, elem_idx, sublist_idx)
                 assert set(wide.columns) == (
-                    set(hits.columns) - {"particles", "elem_idx"}
+                    set(hits.columns) - {"barcodes", "elem_idx"}
                     | {"sublist_idx"}
                     | set(_COLS.values())
                 ), (
@@ -1459,21 +1474,6 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
                 )
 
                 hits = wide
-
-                # Rename some columns to match the truth hits
-                hits.rename(
-                    columns={
-                        "rec_gx": "x",
-                        "rec_gy": "y",
-                        "rec_gz": "z",
-                        "true_x": "tx",
-                        "true_y": "ty",
-                        "true_z": "tz",
-                        "particles": "particle_id",
-                        "event_nr": "event_id",
-                    },
-                    inplace=True,
-                )
 
         else:
 
