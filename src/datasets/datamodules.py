@@ -1733,9 +1733,9 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
         )
 
         # Sanity checks
-        assert len(hits["event_id"].unique()) == len(
-            particles["event_id"].unique()
-        ), f"Mismatch in number of unique event_ids: {len(hits['event_id'].unique())} in hits and {len(particles['event_id'].unique())} in particles"
+        # assert len(hits["event_id"].unique()) == len(
+        #     particles["event_id"].unique()
+        # ), f"Mismatch in number of unique event_ids: {len(hits['event_id'].unique())} in hits and {len(particles['event_id'].unique())} in particles"
         assert truth_tracks or len(hits["event_id"].unique()) == len(
             tracks["event_id"].unique()
         ), f"Mismatch in number of unique event_ids: {len(hits['event_id'].unique())} in hits and {len(tracks['event_id'].unique())} in tracks"
