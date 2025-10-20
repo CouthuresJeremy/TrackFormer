@@ -1377,6 +1377,8 @@ def extract_barcode(
 class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
 
     def _load_event(self, event_prefix, n_events_split=100):
+        if getattr(self, "verbose", False):
+            print(f"Loading event {event_prefix}")
         self.event = event_prefix
         particle_file = getattr(self, "particle_file", "particles_hits_helix")
         hits_file = getattr(self, "hits_file", "hits")
@@ -1741,8 +1743,6 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
             len(hits["event_id"].unique()) == n_events_split
         ), f"Mismatch in number of unique event_ids: {len(hits['event_id'].unique())} in hits and {n_events_split} in split"
 
-        if getattr(self, "verbose", False):
-            print(f"Loading event {event_prefix}")
         return (
             hits,
             tracks,
