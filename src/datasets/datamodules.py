@@ -317,7 +317,7 @@ def convert_tree_to_dataframe(f, keys, branches_to_load=None, verbose=False):
     if not doubles:
         # No double-jagged → keep original single-jagged path (1 row per element)
         ref = next(iter(singles.values()))
-        event_idx = ak.local_index(ref)
+        event_idx = ak.local_index(ref, axis=0)
         elem_idx = ak.local_index(ref, axis=1)
         bcast = ak.broadcast_arrays(ref, *scalars.values()) if scalars else [ref]
         b_sc = dict(zip(scalars.keys(), bcast[1:])) if scalars else {}
