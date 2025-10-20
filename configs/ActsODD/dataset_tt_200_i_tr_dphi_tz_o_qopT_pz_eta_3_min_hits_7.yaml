@@ -4,8 +4,8 @@ seed_everything: 0
 data:
   class_path: src.datasets.datamodules.DataModule
   init_args:
-    dataset_type: acts
-    dataset_dir: ../../actsODD/odd_output_train
+    dataset_type: acts_root
+    dataset_dir: ../../actsODD/odd_output_tt_splits
     batch_size: 1024
     use_wrapper: True
     persistance: True
