@@ -206,9 +206,17 @@ class RootIterBase(IterBase):
         ]
         super().__init__(dataset_dir, folder, dataset, **kwargs)
         self.available_events = self._event_range()
-        self.available_events = sorted(
-            list(set(int(event) // 100 * 100 for event in self.available_events))
-        )
+        if hasattr(self, "n_events_split"):
+            self.available_events = sorted(
+                list(
+                    set(
+                        int(event) // self.n_events_split * self.n_events_split
+                        for event in self.available_events
+                    )
+                )
+            )
+        else:
+            self.available_events = self._event_range()
 
     def _event_range(self):
         # Find the number of events in the ROOT files
@@ -1378,7 +1386,9 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
 
     def _load_event(self, event_prefix, n_events_split=100):
         if getattr(self, "verbose", False):
-            print(f"Loading event {event_prefix}")
+            print(
+                f"Loading event {event_prefix} and split {event_prefix // n_events_split * n_events_split}"
+            )
         self.event = event_prefix
         particle_file = getattr(self, "particle_file", "particles_hits_helix")
         hits_file = getattr(self, "hits_file", "hits")
