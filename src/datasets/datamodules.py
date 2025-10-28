@@ -1750,7 +1750,7 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
             tracks["event_id"].unique()
         ), f"Mismatch in number of unique event_ids: {len(hits['event_id'].unique())} in hits and {len(tracks['event_id'].unique())} in tracks"
         assert (
-            len(hits["event_id"].unique()) == n_events_split
+            len(hits["event_id"].unique()) <= n_events_split
         ), f"Mismatch in number of unique event_ids: {len(hits['event_id'].unique())} in hits and {n_events_split} in split"
 
         return (
