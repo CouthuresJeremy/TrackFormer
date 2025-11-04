@@ -399,7 +399,9 @@ class BaseModel(L.LightningModule):
         # Access to log_every_n_steps
         log_every_n_steps = self.trainer.log_every_n_steps
 
-        if self.logger and self.global_step % log_every_n_steps == 0:
+        if self.logger and (
+            self.global_step % log_every_n_steps == 0 or mode != "train"
+        ):
             # Log loss to TensorBoard
             self.logger.experiment.add_scalars("loss", {mode: loss}, self.global_step)
             # Add individual losses
