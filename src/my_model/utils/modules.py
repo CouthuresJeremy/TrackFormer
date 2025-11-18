@@ -208,6 +208,8 @@ class CosineWarmupScheduler(optim.lr_scheduler._LRScheduler):
         super().__init__(optimizer)
 
     def get_lr(self):
+        if self.last_epoch > self.max_iters:
+            return [self.min_lr for _ in self.base_lrs]
         lr_factor = self.get_lr_factor(epoch=self.last_epoch)
         return [max(base_lr * lr_factor, self.min_lr) for base_lr in self.base_lrs]
 
@@ -338,10 +340,13 @@ class BaseModel(L.LightningModule):
     def configure_optimizers(self):
         optimizer = optim.AdamW(self.parameters(), lr=self.hparams.lr)
         if self.hparams.use_scheduler:
+            self.max_cosine_iters = self.total_steps * min(
+                1000, self.trainer.max_epochs
+            )
             lr_scheduler = CosineWarmupScheduler(
                 optimizer,
                 warmup=self.hparams.warmup,
-                max_iters=self.total_steps * self.trainer.max_epochs,
+                max_iters=self.max_cosine_iters,
                 min_lr=self.hparams.min_lr,
             )
             return [optimizer], [{"scheduler": lr_scheduler, "interval": "step"}]
