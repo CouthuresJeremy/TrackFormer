@@ -2,7 +2,7 @@ import math
 from torch import softmax, nn, optim
 import torch
 import numpy as np
-from torch.nn.functional import mse_loss, l1_loss
+from torch.nn.functional import mse_loss, l1_loss, huber_loss
 import lightning as L
 from abc import ABC, abstractmethod
 
@@ -16,7 +16,7 @@ def scaled_dot_product(q, k, v, mask=None):
 
     Args:
         q, k, v (torch.Tensor)  : Query , Key , value  tensors  (B, num_heads, seq_len, head_dim).
-        mask : batch firts mask
+        mask : batch first mask
     """
 
     L, S = q.size(-2), k.size(-2)
@@ -239,6 +239,26 @@ class Loss:
             self.loss_fn = lambda preds, targets: torch.mean(
                 (2 * (1 - torch.cos(preds - targets)))
             )
+        elif "rmse_angle" == self.mode:
+            # Use sqrt(2*(1-cos(theta))) instead of angle directly
+            # https://stats.stackexchange.com/a/565057
+            # https://stats.stackexchange.com/a/425270
+            self.loss_fn = lambda preds, targets: torch.mean(
+                torch.sqrt(2 * (1 - torch.cos(preds - targets)))
+            )
+        elif "mse_cos_sin" == self.mode:
+            # Predict cos and sin of the angle
+            # loss = 2 * (1 - (c_hat * cos(theta) + s_hat * sin(theta)))
+            self.loss_fn = lambda preds, targets: torch.mean(
+                2
+                * (
+                    1
+                    - (
+                        preds[:, 0] * torch.cos(targets)
+                        + preds[:, 1] * torch.sin(targets)
+                    )
+                )
+            )
         elif "mae" == self.mode:
             self.loss_fn = l1_loss
         elif "mse_inv" == self.mode:
@@ -258,8 +278,30 @@ class Loss:
                 lambda preds, targets: torch.sqrt(
                     torch.mean(torch.square((preds - targets) / targets))
                 )
-                * 100
+                * 100.0
             )
+        elif "huber" == self.mode:
+            self.loss_fn = huber_loss
+        elif "huber_resolution" == self.mode:
+            self.loss_fn = lambda preds, targets: huber_loss(
+                preds / targets, targets / targets, delta=1.0  # 0.5
+            )
+        elif "huber_resolution_huber" == self.mode:
+            self.loss_fn = lambda preds, targets: huber_loss(
+                preds / targets, targets / targets, delta=1.0  # 0.5
+            ) + huber_loss(preds, targets)
+        elif "huber_mix_resolution_std" == self.mode:
+            self.loss_fn = lambda preds, targets: torch.std(
+                (preds - targets) / targets
+            ) + huber_loss(preds, targets)
+        elif "huber_mix_rel_rmse" == self.mode:
+            self.loss_fn = lambda preds, targets: torch.sqrt(
+                torch.mean(torch.square((preds - targets) / targets))
+            ) + huber_loss(preds, targets)
+        elif "mse_mix_resolution_std" == self.mode:
+            self.loss_fn = lambda preds, targets: torch.std(
+                (preds - targets) / targets
+            ) + mse_loss(preds, targets)
         else:
             raise ValueError(f"Uknown loss funtion: {self.mode}")
 
@@ -370,11 +412,33 @@ class BaseModel(L.LightningModule):
                 if self.hparams.norm_loss == "std":
                     preds_i = preds_i / torch.std(label_i)
                     label_i = label_i / torch.std(label_i)
+                elif self.hparams.norm_loss == "var":
+                    preds_i = preds_i / torch.var(label_i)
+                    label_i = label_i / torch.var(label_i)
                 else:
                     raise ValueError(
                         f"Unknown norm_loss method: {self.hparams.norm_loss}"
                     )
             loss = criterion(preds_i, label_i)
+            if (
+                hasattr(self.hparams, "loss_clip")
+                and self.hparams.loss_clip is not None
+            ):
+                loss = torch.clamp(loss, max=self.hparams.loss_clip)
+            if (
+                hasattr(self.hparams, "loss_floor")
+                and self.hparams.loss_floor is not None
+            ):
+                loss = torch.clamp(loss, min=self.hparams.loss_floor)
+            # if hasattr(self.hparams, "norm_loss"):
+            #     if self.hparams.norm_loss == "std":
+            #         loss = loss / torch.std(label[:, i])
+            #     elif self.hparams.norm_loss == "var":
+            #         loss = loss / torch.var(label[:, i])
+            #     else:
+            #         raise ValueError(
+            #             f"Unknown norm_loss method: {self.hparams.norm_loss}"
+            #         )
             losses.append(loss)
             self.log(
                 f"{mode}_loss_param_{i}",
@@ -384,16 +448,34 @@ class BaseModel(L.LightningModule):
                 batch_size=inputs.shape[0],
             )
         # Total loss
-        if self.hparams.aggregate_loss == "sum":
-            loss = torch.sum(torch.stack(losses))
-        elif self.hparams.aggregate_loss == "mean":
-            loss = torch.mean(torch.stack(losses))
-        elif self.hparams.aggregate_loss == "geometric_mean":
-            loss = torch.prod(torch.stack(losses)) ** (1.0 / len(losses))
-        else:
-            raise ValueError(
-                f"Unknown aggregate loss method: {self.hparams.aggregate_loss}"
+        if (
+            hasattr(self.hparams, "loss_weights")
+            and self.hparams.loss_weights is not None
+        ):
+            assert len(self.hparams.loss_weights) == len(
+                losses
+            ), "Number of loss weights must match number of criteria"
+            weights = torch.tensor(
+                self.hparams.loss_weights, device=inputs.device, dtype=torch.float32
             )
+            loss = torch.sum(torch.stack(losses) * weights)
+        else:
+            if (
+                hasattr(self.hparams, "aggregate_loss")
+                and self.hparams.aggregate_loss is not None
+            ):
+                if self.hparams.aggregate_loss == "sum":
+                    loss = torch.sum(torch.stack(losses))
+                elif self.hparams.aggregate_loss == "mean":
+                    loss = torch.mean(torch.stack(losses))
+                elif self.hparams.aggregate_loss == "geometric_mean":
+                    loss = torch.prod(torch.stack(losses)) ** (1.0 / len(losses))
+                else:
+                    raise ValueError(
+                        f"Unknown aggregate loss method: {self.hparams.aggregate_loss}"
+                    )
+            else:
+                loss = torch.mean(torch.stack(losses))
         self.log(
             f"{mode}_loss",
             loss,
@@ -408,12 +490,32 @@ class BaseModel(L.LightningModule):
             self.global_step % log_every_n_steps == 0 or mode != "train"
         ):
             # Log loss to TensorBoard
+            # self.logger.experiment.add_scalars(
+            #     "loss", {mode: loss.detach().cpu()}, self.global_step
+            # )
+            # #    , self.global_step)
             self.logger.experiment.add_scalars("loss", {mode: loss}, self.global_step)
             # Add individual losses
             for i, l in enumerate(losses):
                 self.logger.experiment.add_scalars(
                     f"loss_param_{i}", {mode: l}, self.global_step
                 )
+
+        self.log(
+            f"memory_peak",
+            torch.cuda.memory_allocated() / 1024**2,
+            prog_bar=True,
+            logger=False,
+            batch_size=inputs.shape[0],
+        )
+        self.log(
+            f"memory_percent",
+            100 * torch.cuda.memory_allocated() / torch.cuda.max_memory_allocated(),
+            prog_bar=True,
+            logger=False,
+            batch_size=inputs.shape[0],
+        )
+        # print()
 
         # Early return
         if self.metric is None:

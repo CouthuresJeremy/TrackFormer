@@ -1,0 +1,60 @@
+# lightning.pytorch==2.4.0
+seed_everything: 0
+trainer:
+  num_nodes: 1
+  precision: 32
+  default_root_dir: Data
+  max_epochs: 100
+  limit_train_batches: 100
+  limit_val_batches: 20
+  check_val_every_n_epoch: 1
+  log_every_n_steps: 1
+  logger:
+      - class_path: lightning.pytorch.loggers.TensorBoardLogger
+        init_args: 
+          default_hp_metric: false
+          save_dir: Data
+          version: tml-1   #mod for experiment everytime
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+      init_args:
+        logging_interval: "step"
+    - class_path: src.utils.ParmSummary
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        filename: model-{epoch:02d}-{val_loss:.2f}
+        monitor: val_loss
+        verbose: True
+        save_top_k: 1
+        mode: min
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        monitor: val_loss
+        patience: 10
+        mode: min
+
+
+
+########################################## model
+model:
+  class_path: src.my_model.transformer.TrackFormer
+  init_args:
+    input_dim: 3
+    model_dim: 128
+    num_classes: 2
+    num_heads: 4
+    num_layers: 2
+    criterion: mse
+    warmup: 100
+    lr: 0.0002
+    dropout: 0.1
+    input_dropout: 0.1
+    
+########################### Dataset
+data:
+  class_path: src.datasets.datamodules.TrackMLDataModule
+  init_args:
+    num_workers: 15
+    use_wrapper: True
+    batch_size: 128
+ckpt_path: last

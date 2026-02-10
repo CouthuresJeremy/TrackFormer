@@ -167,6 +167,7 @@ def setup_variable_mappings():
         "tphi": r"\varphi_{truth}",
         "dphi": r"\Delta\varphi",
         "pT": "p_T",
+        # "qopT": r"\frac{q}{p_T}",
         "qopT": "q/p_T",
         "qpT": "q*p_T",
         "pz": "p_z",

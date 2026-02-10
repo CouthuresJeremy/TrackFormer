@@ -224,14 +224,84 @@ class RootIterBase(IterBase):
 
         event_numbers = []
         for root_file in self.root_files:
-            if not root_file.name.startswith("tracksummary_ambi"):
-                continue
+            print(root_file)
+            # if not root_file.name.startswith("tracksummary_ambi"):
+            #     continue
             with uproot.open(root_file) as f:
+                print(f.keys())
+                # print(f["events"].keys())
                 keys = list(f.keys())
                 if len(keys) == 1 or True:
                     keys = keys[0]
+                print(f[keys].keys())  # Read all branches
 
-                
+                # if not root_file.name.startswith("tracksummary_ambi"):
+                if not root_file.name.startswith("tracksummary"):
+                    if root_file.name.startswith("estimated"):
+                        particles_df = convert_tree_to_dataframe(f, keys)
+                        print(particles_df.columns)
+                        # Get unique pair of event_nr and particleId
+                        print(particles_df[["event_nr", "particleId"]].head())
+                        # Print unique pairs
+                        unique_pairs = particles_df[
+                            ["event_nr", "particleId"]
+                        ].drop_duplicates()
+                        print(unique_pairs)
+
+                    continue
+                ########################################
+
+                branches_to_load = [
+                    "event_nr",
+                    "track_nr",
+                    "majorityParticleId",
+                    "t_charge",
+                    "t_theta",
+                    "t_eta",
+                    "t_phi",
+                    "t_p",
+                    "t_d0",
+                    "t_z0",
+                ]
+                branches_to_load += [
+                    "t_vx",
+                    "t_vy",
+                    "t_vz",
+                    "t_px",
+                    "t_py",
+                    "t_pz",
+                    "t_pT",
+                    # "t_time",
+                ]
+
+                particles_df = convert_tree_to_dataframe(f, keys, branches_to_load)
+                print(particles_df["t_charge"].unique())
+
+                branches_to_load = [
+                    "event_nr",
+                    "track_nr",
+                    "majorityParticleId",
+                    "nMajorityHits",
+                    "eLOC0_fit",
+                    "eLOC1_fit",
+                    "ePHI_fit",
+                    "eTHETA_fit",
+                    "eQOP_fit",
+                    "eT_fit",
+                    "hasFittedParams",
+                    "nStates",
+                    "nMeasurements",
+                    "nOutliers",
+                    "nHoles",
+                    "nSharedHits",
+                    "chi2Sum",
+                    "NDF",
+                ]
+
+                tracks_df = convert_tree_to_dataframe(f, keys, branches_to_load)
+                ########################################
+                # Print the number of entries for each key
+                print({k: len(f[keys][k].array().tolist()) for k in f[keys].keys()})
                 event_number_key = [k for k in f[keys].keys() if "event" in k]
                 assert (
                     len(event_number_key) == 1
@@ -252,6 +322,9 @@ class RootIterBase(IterBase):
                         len(f[keys][event_number_key].array().tolist()),
                     )
                 self.n_events_split = len(f[keys][event_number_key].array().tolist())
+
+                print(f[keys][event_number_key].array().tolist())
+                print(f[keys]["track_nr"].array().tolist())
                 event_numbers.extend(f[keys][event_number_key].array().tolist())
         return sorted(list(set(event_numbers)))
 
@@ -552,6 +625,7 @@ def compute_impact_parameters(
     s_vertex_perigee = R * angle_vertex_perigee
 
     # Compute the z-coordinate at the perigee using the linear propagation along z
+    # t = s / vT; s * p_z / pT = s * (y(v) * m * v_z) / (y(v) * m * vT) = s * v_z / vT = t * v_z
     z_perigee = z_v + s_vertex_perigee * (p_z / pT)
     z0 = z_perigee
 
@@ -707,6 +781,18 @@ class TrackMLDataset(IterBase):
                 if not "r" in group:
                     group["r"] = np.sqrt(group["x"] ** 2 + group["y"] ** 2)
                 group = group.sort_values("r")
+            elif getattr(self, "sort_by_dz", False):
+                # Compute the mean z of the hits
+                mean_z = group["z"].mean()
+                group["dz"] = (group["z"] - mean_z) * mean_z
+                # Sort by absolute distance to the mean z
+                # group["dz"] = np.abs(group["dz"])
+                group = group.sort_values("dz")
+            elif getattr(self, "sort_by_distance", False):
+                group["distance"] = np.sqrt(
+                    group["x"] ** 2 + group["y"] ** 2 + group["z"] ** 2
+                )
+                group = group.sort_values("distance")
 
             # Add custom features
             if "dphi" in input_variables:
@@ -843,6 +929,85 @@ def parse_particle_id(s: str) -> int:
     """
     parts = [int(p) for p in s.strip().split("|") if p]
     return combine_segments(parts)
+
+
+def decode_particle_id(pid: int) -> list[int]:
+    """
+    Decode a packed particle ID into its segments.
+    """
+    BIT_WIDTHS = [16, 16, 32, 8, 32]
+    segments = []
+    for width in reversed(BIT_WIDTHS):
+        segments.append(pid & ((1 << width) - 1))
+        pid >>= width
+    return list(reversed(segments))
+
+
+# Python equivalent of the C++ code using boost::hash_combine
+# Types:
+#   PrimaryVertexId      = uint16
+#   SecondaryVertexId    = uint16
+#   ParticleId           = uint32
+#   GenerationId         = uint8
+#   SubParticleId        = uint32
+#
+# Assumes std::size_t is 64-bit (LP64). The result is an unsigned 64-bit int.
+
+_MASK_ST = (1 << 64) - 1  # mask for std::size_t (64-bit)
+_MAGIC = 0x9E3779B9  # boost::hash_combine constant
+
+
+def _hash_combine(seed: int, hv: int) -> int:
+    # seed ^= hv + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    seed = (seed ^ (hv + _MAGIC + ((seed << 6) & _MASK_ST) + (seed >> 2))) & _MASK_ST
+    return seed
+
+
+def hash_particle_id(
+    barcode: tuple[int, int, int, int, int],
+    # primary_vertex_id: int,
+    # secondary_vertex_id: int,
+    # particle_id: int,
+    # generation_id: int,
+    # subparticle_id: int,
+) -> int:
+    """
+    1-1 equivalent to:
+
+        std::size_t hash() const {
+            std::size_t seed = 0;
+            boost::hash_combine(seed, vertexPrimary());   // uint16
+            boost::hash_combine(seed, vertexSecondary()); // uint16
+            boost::hash_combine(seed, particle());        // uint32
+            boost::hash_combine(seed, generation());      // uint8
+            boost::hash_combine(seed, subParticle());     // uint32
+            return seed;
+        }
+
+    Returns an unsigned 64-bit integer (Python int in [0, 2^64-1]).
+    """
+    (
+        primary_vertex_id,
+        secondary_vertex_id,
+        particle_id,
+        generation_id,
+        subparticle_id,
+    ) = barcode
+
+    # Emulate zero-extension to size_t for the specific unsigned widths
+    v_primary = primary_vertex_id & 0xFFFF  # uint16 -> size_t
+    v_secondary = secondary_vertex_id & 0xFFFF  # uint16 -> size_t
+    v_particle = particle_id & 0xFFFFFFFF  # uint32 -> size_t
+    v_generation = generation_id & 0xFF  # uint8  -> size_t
+    v_sub = subparticle_id & 0xFFFFFFFF  # uint32 -> size_t
+
+    seed = 0
+    seed = _hash_combine(seed, v_primary)
+    seed = _hash_combine(seed, v_secondary)
+    seed = _hash_combine(seed, v_particle)
+    seed = _hash_combine(seed, v_generation)
+    seed = _hash_combine(seed, v_sub)
+    return seed
 
 
 class ActsDatasetProcessing:
@@ -1043,6 +1208,62 @@ class ActsDatasetProcessing:
                 merged_df["dphi0"],
             )
 
+        # Cut scattered tracks
+        if getattr(self, "cut_scattered", False):
+            # This is a truth particle cut
+            # The track must be ordered by radius
+            # Sort by ["event_id", track_index, "tr"]
+            merged_df.sort_values(["event_id", track_index, "tr"], inplace=True)
+            # Get the first hit for each track
+            first_hits = (
+                merged_df.groupby(["event_id", track_index]).first().reset_index()
+            )
+            merged_df_temp = pd.merge(
+                merged_df,
+                first_hits[["event_id", track_index, "tphi"]].rename(
+                    columns={"tphi": "tphi_offset"}
+                ),
+                on=["event_id", track_index],
+                how="left",
+            )
+
+            merged_df_temp["dphi"] = (
+                merged_df_temp["tphi"] - merged_df_temp["tphi_offset"]
+            )
+            # Correct for periodicity
+            merged_df_temp["dphi"] = np.where(
+                merged_df_temp["dphi"] > np.pi,
+                merged_df_temp["dphi"] - 2 * np.pi,
+                merged_df_temp["dphi"],
+            )
+            merged_df_temp["dphi"] = np.where(
+                merged_df_temp["dphi"] < -np.pi,
+                merged_df_temp["dphi"] + 2 * np.pi,
+                merged_df_temp["dphi"],
+            )
+            # Find the scattered tracks
+            scattered_tracks = merged_df_temp.groupby(["event_id", track_index]).apply(
+                lambda group: (
+                    (group["dphi"].shift(-1) - group["dphi"])
+                    * (group["dphi"].shift(-2) - group["dphi"].shift(-1))
+                    < 0
+                ).any()
+            )
+            scattered_tracks = scattered_tracks[scattered_tracks].index.tolist()
+            if verbose:
+                print(f"Found {len(scattered_tracks)} scattered tracks")
+            # Mark the scattered tracks
+            scattered_tracks = set(scattered_tracks)
+            merged_df["scattered"] = merged_df.set_index(
+                ["event_id", track_index]
+            ).index.isin(scattered_tracks)
+            # # Remove the scattered tracks from the merged_df
+            # merged_df = merged_df[
+            #     ~merged_df.set_index(["event_id", track_index]).index.isin(
+            #         scattered_tracks
+            #     )
+            # ]
+
         grouped = merged_df.groupby(["event_id", track_index])
         if verbose:
             print(f"Processing event {self.event}")
@@ -1068,17 +1289,7 @@ class ActsDatasetProcessing:
 
             # Cut scattered tracks
             if getattr(self, "cut_scattered", False):
-                # This is a truth particle cut
-
-                # The track must be ordered by radius
-                if not "tr" in group:
-                    group["tr"] = np.sqrt(group["tx"] ** 2 + group["ty"] ** 2)
                 group_sorted = group.sort_values("tr")
-                # Compute the angle between the hits
-                if not "tphi" in group:
-                    group_sorted["tphi"] = np.arctan2(
-                        group_sorted["ty"], group_sorted["tx"]
-                    )
                 group_sorted["dphi"] = (
                     group_sorted["tphi"] - group_sorted["tphi"].iloc[0]
                 )
@@ -1099,6 +1310,10 @@ class ActsDatasetProcessing:
                     * (group_sorted["dphi"].shift(-2) - group_sorted["dphi"].shift(-1))
                     < 0
                 ).any()
+                assert group["scattered"].nunique() == 1, "Inconsistent scattered flag"
+                assert (
+                    group["scattered"].iloc[0] == scattered
+                ), "Inconsistent scattered flag"
                 if scattered:
                     if verbose:
                         # Print the track id and number of hits
@@ -1267,7 +1482,7 @@ class ActsDataset(ActsDatasetProcessing, IterBase):
         particle_file = getattr(self, "particle_file", "particles_simulated")
         hits_file = getattr(self, "hits_file", "hits")
         track_file = getattr(self, "track_file", "tracks_ambi")
-
+        # particles = self.path / f"{event_prefix}-particles_hits.csv"
         particles = self.path / f"{event_prefix}-{particle_file}.csv"
         hits = self.path / f"{event_prefix}-{hits_file}.csv"
         tracks = self.path / f"{event_prefix}-{track_file}.csv"
@@ -1437,6 +1652,11 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
         track_params = track_params[0]
         import uproot
 
+        # Use uproot to open the tracksummary file
+        # # and read the tracksummary tree as a pandas DataFrame
+        # with uproot.open(tracksummary_file + ":tracksummary") as f:
+        #     tracksummary = f.pandas.df()
+
         # Load particles
         with uproot.open(particles) as f:
             particles = convert_tree_to_dataframe(f, keys=list(f.keys())[0])
@@ -1499,6 +1719,7 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
                         f, keys=list(f.keys())[0], branches_to_load=branches_to_load
                     )
 
+                # ['event_nr', 'volume_id', 'layer_id', 'surface_id', 'extra_id', 'rec_loc0', 'rec_loc1', 'rec_time', 'var_loc0', 'var_loc1', 'var_time', 'rec_gx', 'rec_gy', 'rec_gz', 'clus_size', 'channel_value', 'channel_loc0', 'clus_size_loc0', 'channel_loc1', 'clus_size_loc1', 'true_loc0', 'true_loc1', 'true_phi', 'true_theta', 'true_qop', 'true_time', 'true_x', 'true_y', 'true_z', 'true_incident_phi', 'true_incident_theta', 'particles', 'residual_loc0', 'residual_loc1', 'residual_time', 'pull_loc0', 'pull_loc1', 'pull_time']
                 # Rename some columns to match the truth hits
                 hits.rename(
                     columns={
@@ -1514,12 +1735,106 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
                     inplace=True,
                 )
 
+                # expected mapping from elem_idx -> output column name
+                _COLS = {
+                    0: "vertex_primary",
+                    1: "vertex_secondary",
+                    2: "particle",
+                    3: "generation",
+                    4: "sub_particle",
+                }
+
+                # Choose grouping index (include sublist_idx if it exists)
+                idx_cols = ["event_id"] + ["event_idx", "sublist_idx"]
+
+                # Pivot rows -> columns
+                wide = (
+                    hits.pivot_table(
+                        index=idx_cols,
+                        columns="elem_idx",
+                        values="barcodes",
+                        aggfunc="first",
+                    )
+                    .rename(columns=_COLS)
+                    .reset_index()
+                )
+
+                # Keep/verify all other columns are constant within each event
+                value_cols = [
+                    c
+                    for c in hits.columns
+                    if c not in (set(idx_cols) | {"barcodes", "elem_idx"})
+                ]
+
+                if value_cols:
+                    nuniques = hits.groupby(idx_cols, dropna=False)[value_cols].nunique(
+                        dropna=False
+                    )
+                    # Find any columns that vary within a group
+                    varying = {
+                        c: nuniques.index[nuniques[c] > 1].tolist()
+                        for c in value_cols
+                        if (nuniques[c] > 1).any()
+                    }
+
+                    if varying:
+                        raise ValueError(
+                            "Some columns vary within an event and cannot be kept unambiguously: "
+                            + ", ".join(
+                                f"{c} (groups: {len(varying[c])})" for c in varying
+                            )
+                        )
+
+                    # Take the first row per group (since they are constant within the group)
+                    meta = (
+                        hits.sort_values(
+                            idx_cols
+                            + (["elem_idx"] if "elem_idx" in hits.columns else [])
+                        )
+                        .groupby(idx_cols, as_index=False)[value_cols]
+                        .first()
+                    )
+
+                    # Merge metadata back onto the pivoted table
+                    wide = wide.merge(meta, on=idx_cols, how="left")
+
+                # Final column order (event keys + particle id columns + the rest)
+                particle_cols = list(_COLS.values())
+                other_cols = [
+                    c
+                    for c in wide.columns
+                    if c not in (set(idx_cols) | set(particle_cols))
+                ]
+                wide = wide[idx_cols + particle_cols + other_cols]
+                assert (
+                    wide[particle_cols].notna().all().all()
+                ), "NaN values found in particle id columns"
+                # Make sure that the columns in wide are the same as in hits (except for barcodes, elem_idx, sublist_idx)
+                assert set(wide.columns) == (
+                    set(hits.columns) - {"barcodes", "elem_idx"}
+                    | {"sublist_idx"}
+                    | set(_COLS.values())
+                ), (
+                    "Columns in wide do not match columns in hits"
+                    + f" ({wide.columns} vs {hits.columns})"
+                )
+
                 hits = extract_barcode(
                     hits,
                     idx_cols=["event_id"] + ["event_idx", "sublist_idx"],
                     barcode_col="barcodes",
                     barcode_index_col="elem_idx",
                 )
+                # Make sure hits and wide are the same
+                assert set(hits.columns) == set(wide.columns)
+                assert hits.shape == wide.shape
+                for col in hits.columns:
+                    if col not in idx_cols + particle_cols:
+                        assert hits[col].equals(
+                            wide[col]
+                        ), f"Column {col} does not match"
+                # hits = wide
+                print("Hits and wide are the same")
 
         else:
 
@@ -1782,7 +2097,6 @@ class DatasetWrapper(Dataset):
         self.dataset_dir = Path(dataset_dir)
         self.dataset_type = dataset.lower()
         self.folder = folder
-        self.load = kwargs.pop("load", True)
         dataset_suffix = kwargs.pop("dataset_suffix", "")
         # Add kwargs input_variables and output_variables if available
         input_variables = kwargs.get("input_variables", ["tx", "ty", "tz"])
@@ -1828,12 +2142,6 @@ class DatasetWrapper(Dataset):
         if not self._is_preprocessed():
             self._preprocess_data()
 
-        # If load is set to False, skip loading the data
-        if not self.load:
-            console.print(
-                "Skipping loading data as load is set to False.", style="yellow"
-            )
-            return
         # If dynamic_load is set to True, load the data dynamically (i.e., on demand)
         # This is useful for large datasets that cannot fit into memory
         if self.dynamic_load:
@@ -2097,6 +2405,260 @@ class ShardedChunkDataset(DatasetWrapper, IterableDataset):
                 yield sample
 
 
+class PrefetchingChunkDataset(DatasetWrapper, IterableDataset):
+    """
+    Does not work. Is blocked by the file_queue.get() call in the chunk_loader method.
+    This is because the file_queue is not filled in the main thread, so it blocks the entire code.
+    """
+
+    def __init__(self, dataset_dir, folder, prefetch=2, **kwargs):
+        if prefetch < 1:
+            raise ValueError("prefetch must be at least 1")
+        if not isinstance(prefetch, int):
+            raise TypeError("prefetch must be an integer")
+        if "dynamic_load" in kwargs and not kwargs["dynamic_load"]:
+            raise ValueError(
+                "PrefetchingChunkDataset requires dynamic_load=True to work properly."
+            )
+        super().__init__(dataset_dir, folder, **kwargs)
+
+        # Find all chunk files, including the final one
+        self.chunk_files = sorted(
+            glob.glob(
+                str(
+                    self.dataset_dir
+                    / f"preprocessed_{self.folder}{self.data_file_suffix}_chunk_*.pt"
+                )
+            )
+        )
+        final_chunk = (
+            self.dataset_dir
+            / f"preprocessed_{self.folder}{self.data_file_suffix}_final.pt"
+        )
+        if final_chunk.is_file():
+            self.chunk_files.append(str(final_chunk))
+
+        self.prefetch = prefetch
+
+    def chunk_loader(self, file_queue, chunk_queue):
+        """Background thread: loads files from file_queue into chunk_queue."""
+        while True:
+            chunk_file = file_queue.get()
+            if chunk_file is None:
+                chunk_queue.put(None)  # Sentinel to end iteration
+                break
+            chunk_data = torch.load(chunk_file, map_location="cpu")
+            chunk_queue.put(chunk_data)
+            file_queue.task_done()
+
+    def __iter__(self):
+        # Setup the file and chunk queues
+        file_queue = Queue(maxsize=self.prefetch)
+        chunk_queue = Queue(maxsize=self.prefetch)
+        thread = Thread(target=self.chunk_loader, args=(file_queue, chunk_queue))
+        thread.daemon = True
+        thread.start()
+
+        # Enqueue all chunk files to the loader thread
+        for chunk_file in self.chunk_files:
+            file_queue.put(chunk_file)  # This blocks the entire code
+        file_queue.put(None)  # Sentinel
+
+        # Yield samples from prefetched chunks
+        while True:
+            chunk_data = chunk_queue.get()
+            if chunk_data is None:
+                break
+            for sample in chunk_data:
+                yield sample
+
+        thread.join()
+
+
+class PrefetchingChunkDataset(DatasetWrapper, IterableDataset):
+    """
+    This works but is very slow. 40 min for 9765/18092
+    """
+
+    def __init__(self, dataset_dir, folder, prefetch=2, **kwargs):
+        if prefetch < 1:
+            raise ValueError("prefetch must be at least 1")
+        if not isinstance(prefetch, int):
+            raise TypeError("prefetch must be an integer")
+        if "dynamic_load" in kwargs and not kwargs["dynamic_load"]:
+            raise ValueError(
+                "PrefetchingChunkDataset requires dynamic_load=True to work properly."
+            )
+        super().__init__(dataset_dir, folder, **kwargs)
+        self.chunk_files = sorted(
+            glob.glob(
+                str(
+                    self.dataset_dir
+                    / f"preprocessed_{self.folder}{self.data_file_suffix}_chunk_*.pt"
+                )
+            )
+        )
+        final_chunk = (
+            self.dataset_dir
+            / f"preprocessed_{self.folder}{self.data_file_suffix}_final.pt"
+        )
+        if final_chunk.is_file():
+            self.chunk_files.append(str(final_chunk))
+        self.prefetch = prefetch
+
+    def chunk_loader(self, chunk_files, chunk_queue):
+        """Background thread: loads files from chunk_files into chunk_queue."""
+        for chunk_file in chunk_files:
+            chunk_data = torch.load(chunk_file, map_location="cpu")
+            chunk_queue.put(chunk_data)
+        chunk_queue.put(None)  # Sentinel to end iteration
+
+    def __iter__(self):
+        from threading import Thread
+        from queue import Queue
+
+        chunk_queue = Queue(maxsize=self.prefetch)
+        # Only a list of chunk files is passed; no queue to fill in the main thread!
+        thread = Thread(target=self.chunk_loader, args=(self.chunk_files, chunk_queue))
+        thread.daemon = True
+        thread.start()
+
+        # Yield samples from prefetched chunks
+        while True:
+            chunk_data = chunk_queue.get()
+            if chunk_data is None:
+                break
+            for sample in chunk_data:
+                yield sample
+
+        thread.join()
+
+
+import glob
+from multiprocessing import Process, Queue as MPQueue, cpu_count
+import torch
+
+
+# class MultiprocessingPrefetchChunkDataset(DatasetWrapper, IterableDataset):
+class PrefetchingChunkDataset(DatasetWrapper, IterableDataset):
+    def __init__(self, dataset_dir, folder, prefetch=2, num_loaders=None, **kwargs):
+        super().__init__(dataset_dir, folder, **kwargs)
+        self.chunk_files = sorted(
+            glob.glob(
+                str(
+                    self.dataset_dir
+                    / f"preprocessed_{self.folder}{self.data_file_suffix}_chunk_*.pt"
+                )
+            )
+        )
+        final_chunk = (
+            self.dataset_dir
+            / f"preprocessed_{self.folder}{self.data_file_suffix}_final.pt"
+        )
+        if final_chunk.is_file():
+            self.chunk_files.append(str(final_chunk))
+        self.prefetch = prefetch
+        self.num_loaders = (
+            num_loaders if num_loaders is not None else min(cpu_count(), 4)
+        )
+
+    def chunk_loader(self, file_queue, chunk_queue):
+        while True:
+            chunk_file = file_queue.get()
+            if chunk_file is None:
+                break
+            chunk_data = torch.load(chunk_file, map_location="cpu")
+            chunk_queue.put(chunk_data)
+
+    def __iter__(self):
+        file_queue = MPQueue(maxsize=self.prefetch)
+        chunk_queue = MPQueue(maxsize=self.prefetch)
+
+        # Start loader processes
+        loaders = [
+            Process(target=self.chunk_loader, args=(file_queue, chunk_queue))
+            for _ in range(self.num_loaders)
+        ]
+        for proc in loaders:
+            proc.daemon = True
+            proc.start()
+
+        # Queue up all chunk files
+        for chunk_file in self.chunk_files:
+            file_queue.put(chunk_file)
+        # Put a sentinel for each process
+        for _ in loaders:
+            file_queue.put(None)
+
+        # Consume loaded chunks
+        num_chunks = len(self.chunk_files)
+        chunks_yielded = 0
+        while chunks_yielded < num_chunks:
+            chunk_data = chunk_queue.get()
+            for sample in chunk_data:
+                yield sample
+            chunks_yielded += 1
+
+        # Cleanup processes
+        for proc in loaders:
+            proc.join()
+
+
+import glob
+from threading import Thread
+from queue import Queue
+import torch
+import io
+
+
+# class InMemoryPicklePrefetchDataset(DatasetWrapper, IterableDataset):
+class PrefetchingChunkDataset(DatasetWrapper, IterableDataset):
+    def __init__(self, dataset_dir, folder, prefetch=2, **kwargs):
+        super().__init__(dataset_dir, folder, **kwargs)
+        self.chunk_files = sorted(
+            glob.glob(
+                str(
+                    self.dataset_dir
+                    / f"preprocessed_{self.folder}{self.data_file_suffix}_chunk_*.pt"
+                )
+            )
+        )
+        final_chunk = (
+            self.dataset_dir
+            / f"preprocessed_{self.folder}{self.data_file_suffix}_final.pt"
+        )
+        if final_chunk.is_file():
+            self.chunk_files.append(str(final_chunk))
+        self.prefetch = prefetch
+
+    def __iter__(self):
+        chunk_queue = Queue(maxsize=self.prefetch)
+        chunk_files = list(self.chunk_files)  # For this epoch
+
+        def io_loader():
+            for chunk_file in chunk_files:
+                with open(chunk_file, "rb") as f:
+                    pickle_bytes = f.read()
+                chunk_queue.put(pickle_bytes)
+            chunk_queue.put(None)
+
+        thread = Thread(target=io_loader)
+        thread.daemon = True
+        thread.start()
+
+        while True:
+            pickle_bytes = chunk_queue.get()
+            if pickle_bytes is None:
+                break
+            chunk_data = torch.load(io.BytesIO(pickle_bytes), map_location="cpu")
+            for sample in chunk_data:
+                yield sample
+            del chunk_data  # Free up memory ASAP
+            del pickle_bytes  # Optionally free bytes object (not strictly necessary)
+
+        thread.join()
+
+
 class DataModule(L.LightningDataModule):
     """
     Lightning DataModule for managing TrackML or ACTS datasets.
@@ -2115,6 +2677,7 @@ class DataModule(L.LightningDataModule):
         persistance=False,
         pin_memory=False,
         dynamic_load=False,
+        prefetch=0,
         kwargs={},  # kwargs for the dataset class
     ):
         super().__init__()
@@ -2130,8 +2693,11 @@ class DataModule(L.LightningDataModule):
         # Set the dataset class
         if use_wrapper:
             if not dynamic_load:
+                # Traditional loading
                 self.dataset_class = DatasetWrapper
-            else:
+            elif prefetch > 0:
+                self.dataset_class = PrefetchingChunkDataset
+            elif dynamic_load:
                 self.dataset_class = ShardedChunkDataset
         elif dataset == "tml":
             self.dataset_class = TrackMLDataset
@@ -2151,10 +2717,6 @@ class DataModule(L.LightningDataModule):
             self.train_dataset = self._create_dataset("train")
             self.val_dataset = self._create_dataset("val")
 
-        if stage == "validate":
-            self.val_dataset = self._create_dataset("train", load=False)
-            self.val_dataset = self._create_dataset("val", load=False)
-
         if stage in ("test", None):
             self.test_dataset = self._create_dataset("test")
 
@@ -2172,14 +2734,14 @@ class DataModule(L.LightningDataModule):
         return DataLoader(
             dataset,
             batch_size=self.hparams.batch_size,
-            num_workers=self.hparams.num_workers,
+            num_workers=self.hparams.num_workers if self.hparams.prefetch == 0 else 0,
             collate_fn=self.collate_fn,
             persistent_workers=bool(self.hparams.num_workers)
             and self.hparams.persistance,
             pin_memory=self.hparams.pin_memory,
         )
 
-    def _create_dataset(self, folder, load=True):
+    def _create_dataset(self, folder):
         """Helper method to create dataset for the given folder"""
         return self.dataset_class(
             dataset_dir=self.hparams.dataset_dir,
@@ -2188,7 +2750,7 @@ class DataModule(L.LightningDataModule):
             **self.dataset_class_kwargs,
             verbose=folder in ("train", "val"),
             dynamic_load=self.hparams.dynamic_load,
-            load=load,
+            prefetch=self.hparams.prefetch,
         )
 
     @staticmethod

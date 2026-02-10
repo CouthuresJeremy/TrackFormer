@@ -259,15 +259,30 @@ def plot_err_vs_n_hits(
             relative_err_values = 100 * relative_err_values
 
             plt.subplot(1, len(models), model_index)
-            plt.plot(
+            # plt.plot(
+            #     n_hits_values,
+            #     relative_err_values,
+            #     alpha=0.7,
+            #     label=f"{model_info['label']} Model",
+            #     color=f"{model_info['color']}",
+            #     marker="o",
+            #     linestyle="None",
+            # )
+            from matplotlib import colors
+
+            plt.hist2d(
                 n_hits_values,
                 relative_err_values,
-                alpha=0.7,
-                label=f"{model_info['label']} Model",
-                color=f"{model_info['color']}",
-                marker="o",
-                linestyle="None",
+                bins=[
+                    range(
+                        int(n_hits_values["n_hits_track"].min()),
+                        int(n_hits_values["n_hits_track"].max()) + 1,
+                    ),
+                    100,
+                ],
+                norm=colors.LogNorm(),
             )
+            plt.colorbar(label="Particle counts")
 
             plt.xlabel(xlabel, fontsize=12)
             plt.ylabel(ylabel, fontsize=12)
@@ -463,6 +478,244 @@ def plot_binned_confusion_matrix(
 
         if save:
             fig.savefig(filename, bbox_inches="tight")
+        if publication:
+            # Save the figure in publication format
+            publication_save(filename)
+        if show:
+            plt.show()
+        plt.close(fig)
+
+
+def plot_confusion_probability_matrix(
+    target_labels,
+    p_true_list,
+    models,
+    config,
+    title_suffix,
+    output_dir,
+    variable_filenames,
+    bins=50,
+    low_pt=False,
+    show=True,
+    save=True,
+    publication=False,
+):
+    """
+    For each variable and each model, make a binned “confusion matrix” of true vs predicted,
+    where each bin color shows P(predicted_bin | true_bin).
+
+    Parameters
+    ----------
+    bins : int or [int, int]
+        Number of bins in x and y (or separate [xbins, ybins]).
+    """
+    for var_index, var in enumerate(target_labels):
+        pi_true_values, model_predictions, _ = prepare_data(
+            p_true_list, models, config, var_index, var, low_pt
+        )
+
+        title = f"${var}^{{true}}$ vs ${var}^{{pred}}$"
+        if low_pt:
+            title += " ($p_T$ < 10 GeV)"
+        title += title_suffix
+
+        xlabel = f"${var}^{{true}}$" + (" [GeV]" if var.startswith("p") else "")
+        ylabel = f"${var}^{{pred}}$" + (" [GeV]" if var.startswith("p") else "")
+
+        filename = output_dir / f"{variable_filenames[var]}_confusion_prob.png"
+        if low_pt:
+            filename = filename.with_name(filename.stem + "_low_pt" + filename.suffix)
+
+        # prepare the figure
+        fig, axes = plt.subplots(
+            1, len(models), figsize=(6 * len(models), 6), sharex=True, sharey=True
+        )
+        fig.suptitle(title, fontsize=16)
+
+        # determine overall range for x=y line and binning
+        vmin = min(pi_true_values)
+        vmax = max(pi_true_values)
+        if var == "p_T" and config["output_variables"][var_index] == "qopT":
+            vmin = 0
+            vmax = 10
+        hist_range = [[vmin, vmax], [vmin, vmax]]
+
+        for model_index, (model_name, model_info) in enumerate(models.items(), start=1):
+            pi_pred_values = model_predictions[model_name]
+
+            plt.subplot(1, len(models), model_index)
+
+            # x=y reference line
+            plt.plot([vmin, vmax], [vmin, vmax], "--", color="black")
+
+            # compute raw 2D histogram
+            H, xedges, yedges = np.histogram2d(
+                pi_true_values, pi_pred_values, bins=bins, range=hist_range
+            )
+
+            # normalize rows: for each true‐bin i, sum_j H[i,j] = total events in that true‐bin
+            row_sums = H.sum(axis=1, keepdims=True)
+            H_prob = np.divide(H, row_sums, where=(row_sums > 0))
+            # any true‐bins with zero entries remain zero
+
+            # draw pcolormesh; note H_prob.T because pcolormesh expects [Y, X] ordering
+            mesh = plt.pcolormesh(
+                xedges,
+                yedges,
+                H_prob.T,
+                # cmap=model_info.get("cmap", "viridis"),
+                cmap="viridis",
+                shading="auto",
+                # norm=LogNorm(),
+            )
+            plt.colorbar(mesh, label="P(predicted | true)", orientation="vertical")
+            # Set colorbar range to [0, 1]
+            mesh.set_clim(0, 1)
+
+            ax = plt.gca()
+            ax.set_xlabel(xlabel, fontsize=12)
+            ax.set_ylabel(ylabel, fontsize=12)
+            ax.grid(True, linestyle="--", alpha=0.5)
+            ax.set_title(model_info["label"])
+
+            if var == "p_T" and config["output_variables"][var_index] == "qopT":
+                ax.set_xlim(0, 10)
+                ax.set_ylim(0, 10)
+
+            ax.set_aspect("equal", "box")
+
+        if save:
+            fig.savefig(filename, bbox_inches="tight", dpi=150)
+        if publication:
+            # Save the figure in publication format
+            publication_save(filename)
+        if show:
+            plt.show()
+        plt.close(fig)
+
+
+def plot_confusion_probability_matrix_out(
+    target_labels,
+    p_true_list,
+    models,
+    config,
+    title_suffix,
+    output_dir,
+    variable_filenames,
+    bins=50,
+    low_pt=False,
+    show=True,
+    save=True,
+    publication=False,
+):
+    """
+    For each variable and each model, make a binned “confusion matrix” of true vs predicted,
+    where each bin color shows P(predicted_bin | true_bin).
+
+    Parameters
+    ----------
+    bins : int or [int, int]
+        Number of bins in x and y (or separate [xbins, ybins]).
+    """
+    for var_index, var in enumerate(target_labels):
+        pi_true_values, model_predictions, _ = prepare_data(
+            p_true_list, models, config, var_index, var, low_pt
+        )
+
+        title = f"${var}^{{true}}$ vs ${var}^{{pred}}$"
+        if low_pt:
+            title += " ($p_T$ < 10 GeV)"
+        title += title_suffix
+
+        xlabel = f"${var}^{{true}}$" + (" [GeV]" if var.startswith("p") else "")
+        ylabel = f"${var}^{{pred}}$" + (" [GeV]" if var.startswith("p") else "")
+
+        filename = output_dir / f"{variable_filenames[var]}_confusion_prob.png"
+        if low_pt:
+            filename = filename.with_name(filename.stem + "_low_pt" + filename.suffix)
+
+        # prepare the figure
+        fig, axes = plt.subplots(
+            1, len(models), figsize=(6 * len(models), 6), sharex=True, sharey=True
+        )
+        fig.suptitle(title, fontsize=16)
+
+        # determine overall range for x=y line and binning
+        vmin = min(pi_true_values)
+        vmax = max(pi_true_values)
+        if var == "p_T" and config["output_variables"][var_index] == "qopT":
+            vmin = 0
+            vmax = 10
+        hist_range = [[vmin, vmax], [vmin, vmax]]
+
+        # Prepare true-axis bin edges (same for all models):
+        tmin, tmax = np.min(pi_true_values), np.max(pi_true_values)
+        inner_bins = bins - 2
+        # bin width for the inner range:
+        dx = (tmax - tmin) / inner_bins
+        # edges: one bin-width below tmin, linspace from tmin→tmax, one above tmax
+        edges_x = np.concatenate(
+            ([tmin - dx], np.linspace(tmin, tmax, inner_bins + 1), [tmax + dx])
+        )
+
+        for model_index, (model_name, model_info) in enumerate(models.items(), start=1):
+            pi_pred_values = model_predictions[model_name]
+
+            plt.subplot(1, len(models), model_index)
+
+            # x=y reference line
+            plt.plot([vmin, vmax], [vmin, vmax], "--", color="black")
+
+            pmin, pmax = np.min(pi_pred_values), np.max(pi_pred_values)
+            # same logic for predicted axis:
+            dy = (pmax - pmin) / inner_bins
+            edges_y = np.concatenate(
+                ([pmin - dy], np.linspace(pmin, pmax, inner_bins + 1), [pmax + dy])
+            )
+
+            # compute and normalize
+            H, xedges, yedges = np.histogram2d(
+                pi_true_values, pi_pred_values, bins=[edges_x, edges_y]
+            )
+
+            # # compute raw 2D histogram
+            # H, xedges, yedges = np.histogram2d(
+            #     pi_true_values, pi_pred_values, bins=bins, range=hist_range
+            # )
+
+            # normalize rows: for each true‐bin i, sum_j H[i,j] = total events in that true‐bin
+            row_sums = H.sum(axis=1, keepdims=True)
+            H_prob = np.divide(H, row_sums, where=(row_sums > 0))
+            # any true‐bins with zero entries remain zero
+
+            # draw pcolormesh; note H_prob.T because pcolormesh expects [Y, X] ordering
+            mesh = plt.pcolormesh(
+                xedges,
+                yedges,
+                H_prob.T,
+                cmap=model_info.get("cmap", "viridis"),
+                # cmap="viridis",
+                shading="auto",
+                # norm=LogNorm(),
+            )
+            plt.colorbar(mesh, label="P(predicted | true)", orientation="vertical")
+            # Set colorbar range to [0, 1]
+            mesh.set_clim(0, 1)
+
+            ax = plt.gca()
+            ax.set_xlabel(xlabel, fontsize=12)
+            ax.set_ylabel(ylabel, fontsize=12)
+            ax.grid(True, linestyle="--", alpha=0.5)
+            ax.set_title(model_info["label"])
+
+            if var == "p_T" and config["output_variables"][var_index] == "qopT":
+                ax.set_xlim(0, 10)
+                ax.set_ylim(0, 10)
+
+            ax.set_aspect("equal", "box")
+
+        if save:
+            fig.savefig(filename, bbox_inches="tight", dpi=150)
         if publication:
             # Save the figure in publication format
             publication_save(filename)
@@ -1225,6 +1478,40 @@ def plot_pi_relative_error_distributions_low_pt_1_2(
         # Plot histograms and fits
         plt.figure(figsize=(6 * len(models), 6))
         plt.suptitle(title, fontsize=16)
+
+        # https://stackoverflow.com/questions/12444716/how-do-i-set-the-figure-title-and-axes-labels-font-size
+        # params = {'legend.fontsize': 'x-large',
+        #   'figure.figsize': (15, 5),
+        #  'axes.labelsize': 'x-large', # Font size for the axes labels
+        #  'axes.titlesize':'x-large', # Font size for the axes title
+        #  'xtick.labelsize':'x-large',
+        #  'ytick.labelsize':'x-large'}
+        # Set font size for the axes labels
+        # plt.rcParams.update({"axes.titlesize": 16})
+
+        # plt.rcParams.update({"axes.labelsize": 14})
+        # # Set font size for the legend
+        # plt.rcParams.update({"legend.fontsize": 12})
+        # # Set font size for the colorbar
+        # plt.rcParams.update({"colorbar.fontsize": 12})
+        # # Set font size for the title
+        # plt.rcParams.update({"axes.titlesize": 16})
+        # # Set font size for the ticks
+        # plt.rcParams.update({"xtick.labelsize": 12})
+        # plt.rcParams.update({"ytick.labelsize": 12})
+        # # Set font size for the colorbar ticks
+        # plt.rcParams.update({"colorbar.ticksize": 12})
+        # # Set font size for the colorbar label
+        # plt.rcParams.update({"colorbar.labelsize": 12})
+        # # Set font size for the colorbar title
+        # plt.rcParams.update({"colorbar.title.size": 12})
+        # # Set font size for the colorbar ticks
+        # plt.rcParams.update({"colorbar.tick.labelsize": 12})
+        # # Set font size for all text
+        # plt.rcParams.update({"font.size": 12})
+        # # Set font size for the axes
+        # plt.tick_params(axis='both', which='major', labelsize=12)
+        # plt.tick_params(axis='both', which='minor', labelsize=10)
 
         for model_index, (model_name, model_info) in enumerate(models.items(), start=1):
             plt.subplot(1, len(models), model_index)

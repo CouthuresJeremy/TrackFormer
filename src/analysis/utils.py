@@ -14,10 +14,12 @@ def get_model_checkpoint_path(version_dir: str):
     version_dir = Path(version_dir)
     checkpoint_dir = version_dir / "checkpoints"
     checkpoint_files = list(checkpoint_dir.glob("model*.ckpt"))
-    assert (
-        len(checkpoint_files) == 1
-    ), f"Found {len(checkpoint_files)} checkpoints in {checkpoint_dir}"
-    return checkpoint_files[0]
+    if len(checkpoint_files) == 0:
+        raise FileNotFoundError(
+            f"No checkpoints found in {checkpoint_dir}. Please ensure the model has been trained."
+        )
+    print(f"Found {len(checkpoint_files)} checkpoints in {checkpoint_dir}")
+    return checkpoint_files
 
 
 def get_config(version_dir: str):

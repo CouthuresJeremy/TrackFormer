@@ -158,7 +158,7 @@ model_data = [
         ["r", "dphi", "z"],
         "Acts_muons_root",
         ["q_over_p", "ptheta", "dphi0", "d0", "z0"],
-        "Models/ActsODD/version_529",
+        "Models/ActsODD/lightning_logs/version_529",
     ),  # eta 1; min 7 hits # 32 - 16 # geo mean # finetuned muons # lr 1e-6
     # (["r", "dphi", "z"], "Acts_muons_root", ["q_over_p", "ptheta", "dphi0", "d0", "z0"], "Models/ActsODD/version_522"), # eta 1; min 7 hits # 32 - 16 # geo mean # trained muons
     (
@@ -253,7 +253,7 @@ for model in models_dir:
         continue
     print(f"Loading {model} model")
     if models_dir[model].is_dir():
-        ml_model_path = get_model_checkpoint_path(models_dir[model])[0]
+        ml_model_path = get_model_checkpoint_path(models_dir[model])
     elif models_dir[model].is_file():
         ml_model_path = models_dir[model]
     else:
@@ -614,28 +614,25 @@ def process_batch(
     mask_tensor_batch_padded = pad_sequence(
         mask_tensor_batch, batch_first=True, padding_value=0
     )
-    # Get available device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # print(f"Using device: {device}")
-    if device.type == "cuda":
-        # Move data to device
-        hits_tensor_batch_padded = hits_tensor_batch_padded.to(device)
-        mask_tensor_batch_padded = mask_tensor_batch_padded.to(device)
 
     # Model prediction
-    pred = ml_model(hits_tensor_batch_padded, mask=mask_tensor_batch_padded)
+    with torch.inference_mode():
+        pred = ml_model(hits_tensor_batch_padded, mask=mask_tensor_batch_padded)
 
-    # Process the predictions
+    pred_cpu = pred.detach().cpu().numpy()  # one sync
+
+    # fill rows from CPU arrays; vectorize phi0 if needed
+    out_cols = config["output_variables"]
+    has_dphi0 = "dphi0" in out_cols
+
     for i, row_data in enumerate(batch_row_data):
-        for j, col in enumerate(config["output_variables"]):
-            row_data[f"{col}{suffix}"] = pred[i, j].item()
-
-        if "dphi0" in config["output_variables"]:
+        for j, col in enumerate(out_cols):
+            row_data[f"{col}{suffix}"] = pred_cpu[i, j]
+        if has_dphi0:
             row_data[f"phi0{suffix}"] = (
                 row_data[f"dphi0{suffix}"] + row_data["phi_offset"]
             )
-
-        rows.append(row_data)  # Append processed row
+        rows.append(row_data)
 
     return rows
 
@@ -656,6 +653,10 @@ def model_inference(
     output_dir=output_dir,
     output_filename="model_track_predictions_measurements.csv",
 ):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    ml_model = ml_model.to(device).eval()
+    use_cuda = device.type == "cuda"
+
     start_time = time()
 
     # Create empty dataframe for track predictions: {"event_id", "track_id", "q/p_T_pred", "pz_pred"}
@@ -703,9 +704,11 @@ def model_inference(
             # assert len(hits_sel) == track_sel["n_hits_track"].iloc[0], f"Number of hits for track {track_id} does not match the number of hits in the event tracks. {len(hits_sel)} vs {track_sel['n_hits_track'].iloc[0]}"
 
             # Convert the hits to a tensor
-            hits_tensor = torch.tensor(
-                hits_sel[input_variables].values, dtype=torch.float32
-            )
+            # hits_tensor = torch.tensor(
+            #     hits_sel[input_variables].values, dtype=torch.float32
+            # )
+            arr = hits_sel[input_variables].to_numpy(dtype=np.float32, copy=False)
+            hits_tensor = torch.from_numpy(arr)
             # Convert the mask to a tensor
             mask_tensor = torch.ones(hits_tensor.shape[0], dtype=torch.bool)
 
@@ -727,6 +730,18 @@ def model_inference(
 
             # If batch is full, process the batch
             if len(batch_hits_tensor) >= batch_size:
+                # when batch is full:
+                if use_cuda:
+                    # (optional but helpful) pin then non_blocking copy
+                    batch_hits_tensor = [
+                        t.pin_memory().to(device, non_blocking=True)
+                        for t in batch_hits_tensor
+                    ]
+                    batch_mask_tensor = [
+                        t.pin_memory().to(device, non_blocking=True)
+                        for t in batch_mask_tensor
+                    ]
+
                 rows = process_batch(
                     batch_hits_tensor,
                     batch_mask_tensor,
@@ -753,6 +768,17 @@ def model_inference(
 
         # If any remaining tracks in the last batch (less than batch_size)
         if len(batch_hits_tensor) > 0:
+            # when batch is full:
+            if use_cuda:
+                # (optional but helpful) pin then non_blocking copy
+                batch_hits_tensor = [
+                    t.pin_memory().to(device, non_blocking=True)
+                    for t in batch_hits_tensor
+                ]
+                batch_mask_tensor = [
+                    t.pin_memory().to(device, non_blocking=True)
+                    for t in batch_mask_tensor
+                ]
             rows = process_batch(
                 batch_hits_tensor,
                 batch_mask_tensor,
@@ -797,6 +823,455 @@ def model_inference(
 
 
 # %%
+def process_batch_vectorized(
+    hits_tensor_batch,
+    mask_tensor_batch,
+    batch_row_data,
+    ml_model,
+    out_cols,
+    use_autocast=False,
+    event_ids=None,
+    track_ids=None,
+    phi_offsets=None,
+    pred_chunks=None,
+    device=None,  # <— pass device in
+):
+    # 1) Pad on CPU (fast & contiguous)
+    hits_tensor_batch_padded = pad_sequence(
+        hits_tensor_batch, batch_first=True
+    )  # (B, T, F) CPU
+    mask_tensor_batch_padded = pad_sequence(
+        mask_tensor_batch, batch_first=True, padding_value=0
+    )  # (B, T) CPU
+
+    # 2) Single H→D copy for the whole batch
+    if device is not None and device.type == "cuda":
+        hits_tensor_batch_padded = hits_tensor_batch_padded.to(
+            device, non_blocking=True
+        )
+        mask_tensor_batch_padded = mask_tensor_batch_padded.to(
+            device, non_blocking=True
+        )
+
+    # 3) Inference
+    with torch.inference_mode():
+        if use_autocast and device is not None and device.type == "cuda":
+            with torch.cuda.amp.autocast("cuda"):
+                pred = ml_model(hits_tensor_batch_padded, mask=mask_tensor_batch_padded)
+        else:
+            pred = ml_model(hits_tensor_batch_padded, mask=mask_tensor_batch_padded)
+
+    # 4) Single D→H copy
+    pred_cpu = pred.detach().cpu().numpy()  # (B, O)
+
+    # 5) Append metadata
+    event_ids.extend([r["event_id"] for r in batch_row_data])
+    track_ids.extend([r["track_id"] for r in batch_row_data])
+    if "dphi0" in out_cols and phi_offsets is not None:
+        phi_offsets.extend([r["phi_offset"] for r in batch_row_data])
+
+    pred_chunks.append(pred_cpu)
+
+
+def model_inference(
+    ml_model,
+    all_events_hits,
+    all_events_tracks,
+    input_variables,
+    config,
+    batch_size=64,
+    suffix="_pred_measurement",
+    phi_offset_column="g_phi_offset",
+    output_dir=output_dir,
+    output_filename="model_track_predictions_measurements.csv",
+):
+
+    start_time = time()
+    out_cols = config["output_variables"]
+    need_phi0 = "dphi0" in out_cols
+
+    # --- Device setup (do once) ---
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    ml_model = ml_model.to(device).eval()
+    use_autocast = device.type == "cuda"
+
+    # --- Accumulators (vectorized build later) ---
+    event_ids = []
+    track_ids = []
+    phi_offsets = [] if need_phi0 else None
+    pred_chunks = []
+
+    # --- Group once; avoid .copy() ---
+    hits_groups = all_events_hits.groupby(["event_id", "track_id"])
+
+    # --- Batching state ---
+    batch_hits_tensor = []
+    batch_mask_tensor = []
+    batch_row_data = []
+
+    processed_tracks = 0
+    last_log = 0
+    progress_interval = 1000
+
+    with torch.no_grad():
+        for (event, track_id), hits_sel in hits_groups:
+            # Zero-copy CPU array -> Tensor
+            arr = hits_sel[input_variables].to_numpy(dtype=np.float32, copy=False)
+            hits_tensor = torch.from_numpy(arr)  # CPU tensor (zero-copy)
+            mask_tensor = torch.ones(hits_tensor.shape[0], dtype=torch.bool)
+
+            batch_hits_tensor.append(hits_tensor)
+            batch_mask_tensor.append(mask_tensor)
+
+            row_meta = {"event_id": event, "track_id": track_id}
+            if need_phi0:
+                # requires that phi_offset_column exists on hits_sel
+                row_meta["phi_offset"] = hits_sel.iloc[0][phi_offset_column]
+                # Optional sanity check if you rely on it being zero
+                # assert hits_sel.iloc[0]["dphi"] == 0, "First hit dphi is not zero after calculation."
+            batch_row_data.append(row_meta)
+
+            # If batch full -> optional H→D then predict and accumulate
+            if len(batch_hits_tensor) >= batch_size:
+                process_batch_vectorized(
+                    batch_hits_tensor,  # keep on CPU
+                    batch_mask_tensor,  # keep on CPU
+                    batch_row_data,
+                    ml_model,
+                    out_cols,
+                    use_autocast=use_autocast,
+                    event_ids=event_ids,
+                    track_ids=track_ids,
+                    phi_offsets=phi_offsets,
+                    pred_chunks=pred_chunks,
+                    device=device,  # <— let the function do one big .to(...)
+                )
+
+                # clear batch buffers
+                batch_hits_tensor.clear()
+                batch_mask_tensor.clear()
+                batch_row_data.clear()
+
+            processed_tracks += 1
+            if processed_tracks - last_log >= progress_interval:
+                last_log = processed_tracks
+                elapsed = time() - start_time
+                if device.type == "cuda":
+                    torch.cuda.synchronize()
+                print(f"Progress: {processed_tracks} / {len(all_events_tracks)}")
+                print(
+                    f"Time elapsed: {elapsed / processed_tracks:.6f} s/track "
+                    f"({processed_tracks / elapsed:.3f} tracks/s)"
+                )
+
+        # Flush the remainder
+        if batch_hits_tensor:
+            process_batch_vectorized(
+                batch_hits_tensor,  # keep on CPU
+                batch_mask_tensor,  # keep on CPU
+                batch_row_data,
+                ml_model,
+                out_cols,
+                use_autocast=use_autocast,
+                event_ids=event_ids,
+                track_ids=track_ids,
+                phi_offsets=phi_offsets,
+                pred_chunks=pred_chunks,
+                device=device,  # <— let the function do one big .to(...)
+            )
+
+    # --- Build final DataFrame (single pass) ---
+    pred_all = (
+        np.concatenate(pred_chunks, axis=0)
+        if len(pred_chunks) > 1
+        else (
+            pred_chunks[0]
+            if pred_chunks
+            else np.empty((0, len(out_cols)), dtype=np.float32)
+        )
+    )
+
+    df = pd.DataFrame(
+        {
+            "event_id": event_ids,
+            "track_id": track_ids,
+        }
+    )
+
+    # Add prediction columns
+    for j, col in enumerate(out_cols):
+        df[f"{col}{suffix}"] = pred_all[:, j]
+
+    # Compute phi0 in one shot if needed
+    if need_phi0:
+        # assumes dphi0 is an output column
+        df[f"phi0{suffix}"] = df[f"dphi0{suffix}"].to_numpy() + np.asarray(
+            phi_offsets, dtype=pred_all.dtype
+        )
+
+    # (Optional) match dtypes to all_events_tracks on overlapping columns
+    matching_columns = [c for c in df.columns if c in all_events_tracks.columns]
+    if matching_columns:
+        df = df.astype(all_events_tracks.dtypes[matching_columns].to_dict())
+
+    # Save if requested
+    if output_dir is not None and hasattr(output_dir, "exists") and output_dir.exists():
+        model_predictions_file = output_dir / (
+            f"model_track{suffix.replace('pred', 'predictions').replace('measurement', 'measurements')}.csv"
+        )
+        print(f"Saving model predictions to {model_predictions_file}")
+        df.to_csv(model_predictions_file, index=False)
+
+        total_elapsed = time() - start_time
+        throughput_info_file = output_dir / (
+            f"throughput_info{suffix.replace('pred', 'predictions').replace('measurement', 'measurements')}.txt"
+        )
+        with open(throughput_info_file, "w") as f:
+            f.write(f"Total time elapsed: {total_elapsed:.6f} seconds\n")
+            f.write(f"Total tracks processed: {len(df)}\n")
+            f.write(
+                f"Average time per track: {total_elapsed / max(1, len(df)):.6f} seconds\n"
+            )
+            f.write(
+                f"Average tracks per second: {len(df) / max(1e-9, total_elapsed):.3f}\n"
+            )
+
+    return df
+
+
+import numpy as np
+import torch
+import pandas as pd
+from time import time
+from torch.nn.utils.rnn import pad_sequence
+
+# -------- Bucketing helpers --------
+
+# Choose bucket boundaries (max sequence length per bucket)
+BUCKET_BOUNDS = [8, 16, 32, 64, 128, 256, 512, 1024]  # adjust to your dataset
+
+
+def bucket_id_from_len(L: int) -> int:
+    for i, b in enumerate(BUCKET_BOUNDS):
+        if L <= b:
+            return i
+    return len(BUCKET_BOUNDS)  # overflow bucket (uncapped)
+
+
+# -------- Core batch processor (single H→D copy + length-based mask) --------
+
+
+def process_batch_vectorized_bucket(
+    hits_tensor_batch,  # List[Tensor] CPU
+    lengths,  # List[int]    CPU lengths for each sequence
+    batch_row_data,  # List[dict]   event_id, track_id, maybe phi_offset
+    ml_model,
+    out_cols,
+    device,
+    use_autocast=False,
+    # accumulators (mutated)
+    event_ids=None,
+    track_ids=None,
+    phi_offsets=None,
+    pred_chunks=None,
+):
+    """
+    Pads on CPU, builds mask from `lengths`, does ONE .to(device) per tensor, runs inference,
+    copies predictions back once, and appends to accumulators.
+    """
+    # 1) Pad features on CPU
+    hits_padded = pad_sequence(hits_tensor_batch, batch_first=True)  # (B, T, F) CPU
+
+    # 2) Build (B, T) mask from lengths on CPU (no per-track mask creation)
+    B, T = hits_padded.size(0), hits_padded.size(1)
+    # arange(T) -> [0..T-1], compare with each length
+    t_range = torch.arange(T, dtype=torch.long).expand(B, T)  # CPU
+    lens = torch.as_tensor(lengths, dtype=torch.long).unsqueeze(1)  # (B,1) CPU
+    mask_padded = t_range < lens  # (B, T) bool CPU
+
+    # 3) Single H→D transfers for the batch
+    if device.type == "cuda":
+        hits_padded = hits_padded.to(device, non_blocking=True)
+        mask_padded = mask_padded.to(device, non_blocking=True)
+
+    # 4) Inference
+    with torch.inference_mode():
+        if use_autocast and device.type == "cuda":
+            with torch.cuda.amp.autocast():
+                pred = ml_model(hits_padded, mask=mask_padded)  # (B, O)
+        else:
+            pred = ml_model(hits_padded, mask=mask_padded)
+
+    # 5) Single D→H copy
+    pred_cpu = pred.detach().cpu().numpy()  # (B, O)
+
+    # 6) Append metadata and predictions
+    event_ids.extend([r["event_id"] for r in batch_row_data])
+    track_ids.extend([r["track_id"] for r in batch_row_data])
+    if "dphi0" in out_cols and phi_offsets is not None:
+        phi_offsets.extend([r["phi_offset"] for r in batch_row_data])
+    pred_chunks.append(pred_cpu)
+
+
+# -------- High-level driver (bucketing + vectorized assembly) --------
+
+
+def model_inference_bucketed(
+    ml_model,
+    all_events_hits,
+    all_events_tracks,
+    input_variables,
+    config,
+    batch_size=4096,  # big batch + buckets = less padding, better GPU util
+    suffix="_pred_measurement",
+    phi_offset_column="g_phi_offset",
+    output_dir=None,
+    output_filename="model_track_predictions_measurements.csv",
+):
+    start_time = time()
+    out_cols = config["output_variables"]
+    need_phi0 = "dphi0" in out_cols
+
+    # Device once
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    ml_model = ml_model.to(device).eval()
+    use_autocast = device.type == "cuda"
+
+    # Global accumulators (final vectorized build)
+    event_ids = []
+    track_ids = []
+    phi_offsets = [] if need_phi0 else None
+    pred_chunks = []
+
+    # Per-bucket buffers
+    buckets_hits = {}  # bucket_id -> List[Tensor]
+    buckets_lens = {}  # bucket_id -> List[int]
+    buckets_meta = {}  # bucket_id -> List[dict]
+
+    def flush_bucket(bid):
+        """Run one batch for a given bucket and clear it."""
+        hits_list = buckets_hits[bid]
+        lens_list = buckets_lens[bid]
+        meta_list = buckets_meta[bid]
+        if not hits_list:
+            return
+        process_batch_vectorized_bucket(
+            hits_list,
+            lens_list,
+            meta_list,
+            ml_model,
+            out_cols,
+            device,
+            use_autocast=use_autocast,
+            event_ids=event_ids,
+            track_ids=track_ids,
+            phi_offsets=phi_offsets,
+            pred_chunks=pred_chunks,
+        )
+        buckets_hits[bid].clear()
+        buckets_lens[bid].clear()
+        buckets_meta[bid].clear()
+
+    # Iterate tracks (avoid .copy())
+    hits_groups = all_events_hits.groupby(["event_id", "track_id"])
+
+    processed_tracks = 0
+    last_log = 0
+    progress_interval = 1000
+
+    with torch.no_grad():
+        for (event, track_id), hits_sel in hits_groups:
+            # Zero-copy -> tensor on CPU
+            arr = hits_sel[input_variables].to_numpy(dtype=np.float32, copy=False)
+            hits_tensor = torch.from_numpy(arr)  # (T, F) CPU
+            L = int(hits_tensor.shape[0])
+            bid = bucket_id_from_len(L)
+
+            if bid not in buckets_hits:
+                buckets_hits[bid] = []
+                buckets_lens[bid] = []
+                buckets_meta[bid] = []
+
+            buckets_hits[bid].append(hits_tensor)
+            buckets_lens[bid].append(L)
+
+            meta = {"event_id": event, "track_id": track_id}
+            if need_phi0:
+                meta["phi_offset"] = hits_sel.iloc[0][phi_offset_column]
+            buckets_meta[bid].append(meta)
+
+            # If any bucket reached batch_size, flush that bucket only
+            if len(buckets_hits[bid]) >= batch_size:
+                flush_bucket(bid)
+
+            processed_tracks += 1
+            if processed_tracks - last_log >= progress_interval:
+                last_log = processed_tracks
+                if device.type == "cuda":
+                    torch.cuda.synchronize()
+                elapsed = time() - start_time
+                print(f"Progress: {processed_tracks} / {len(all_events_tracks)}")
+                print(
+                    f"Time elapsed: {elapsed / processed_tracks:.6f} s/track "
+                    f"({processed_tracks / elapsed:.3f} tracks/s)"
+                )
+
+        # Flush all remaining buckets
+        for bid in list(buckets_hits.keys()):
+            flush_bucket(bid)
+
+    # Vectorized final assembly
+    if pred_chunks:
+        pred_all = np.concatenate(pred_chunks, axis=0)
+    else:
+        pred_all = np.empty((0, len(out_cols)), dtype=np.float32)
+
+    df = pd.DataFrame(
+        {
+            "event_id": event_ids,
+            "track_id": track_ids,
+        }
+    )
+
+    for j, col in enumerate(out_cols):
+        df[f"{col}{suffix}"] = pred_all[:, j]
+
+    if need_phi0:
+        df[f"phi0{suffix}"] = df[f"dphi0{suffix}"].to_numpy() + np.asarray(
+            phi_offsets, dtype=pred_all.dtype
+        )
+
+    # Optional: align dtypes with all_events_tracks for overlapping columns
+    matching_columns = [c for c in df.columns if c in all_events_tracks.columns]
+    if matching_columns:
+        df = df.astype(all_events_tracks.dtypes[matching_columns].to_dict())
+
+    # Optional: save + throughput
+    if output_dir is not None and hasattr(output_dir, "exists") and output_dir.exists():
+        model_predictions_file = output_dir / (
+            f"model_track{suffix.replace('pred', 'predictions').replace('measurement', 'measurements')}.csv"
+        )
+        print(f"Saving model predictions to {model_predictions_file}")
+        df.to_csv(model_predictions_file, index=False)
+
+        total_elapsed = time() - start_time
+        throughput_info_file = output_dir / (
+            f"throughput_info{suffix.replace('pred', 'predictions').replace('measurement', 'measurements')}.txt"
+        )
+        with open(throughput_info_file, "w") as f:
+            f.write(f"Total time elapsed: {total_elapsed:.6f} seconds\n")
+            f.write(f"Total tracks processed: {len(df)}\n")
+            f.write(
+                f"Average time per track: {total_elapsed / max(1, len(df)):.6f} seconds\n"
+            )
+            f.write(
+                f"Average tracks per second: {len(df) / max(1e-9, total_elapsed):.3f}\n"
+            )
+
+    return df
+
+
+# %%
 # %%time
 import torch
 import numpy as np
@@ -804,6 +1279,8 @@ from time import time
 
 # Main loop for batching
 batch_size = 64  # Adjust batch size based on available memory
+batch_size = 1024  # Adjust batch size based on available memory
+batch_size = 4096 * 2**5  # Adjust batch size based on available memory
 
 all_events_hits["tr"] = np.sqrt(all_events_hits["tx"] ** 2 + all_events_hits["ty"] ** 2)
 all_events_hits["tphi"] = np.arctan2(all_events_hits["ty"], all_events_hits["tx"])
@@ -848,6 +1325,11 @@ if not all(
     print("No model predictions found, running the model on the test dataset.")
     ml_model = models["MSE"]["model"]
     ml_model.eval()
+    # Get available device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+    if device.type == "cuda":
+        ml_model = ml_model.to(device)
     start_time = time()
 
     rows = []
@@ -989,7 +1471,7 @@ import torch
 import numpy as np
 
 # Main loop for batching
-batch_size = 64  # Adjust batch size based on available memory
+# batch_size = 64  # Adjust batch size based on available memory
 
 all_events_hits["g_r"] = np.sqrt(
     all_events_hits["g_x_hit"] ** 2 + all_events_hits["g_y_hit"] ** 2

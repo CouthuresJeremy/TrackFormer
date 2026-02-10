@@ -1,0 +1,17 @@
+# lightning.pytorch==2.4.0
+seed_everything: 0
+# model
+model:
+  class_path: src.my_model.transformer.TrackFormer
+  init_args:
+    input_dim: 3
+    model_dim: 128
+    num_classes: 2
+    num_heads: 4
+    num_layers: 2
+    warmup: 100
+    lr: 0.0005
+    dropout: 0.1
+    input_dropout: 0.1
+    criterion: mse
+    use_scheduler: True

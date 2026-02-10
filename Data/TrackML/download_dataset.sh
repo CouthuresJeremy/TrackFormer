@@ -1,5 +1,6 @@
 #!/bin/bash
-
+# curl https://zenodo.org/records/4730157/files/training_part01.tar?download=1 --output training_part01.tar
+# curl https://zenodo.org/api/records/4730157/files-archive --output TrackML.zip
 base_url="https://zenodo.org/records/4730157/files"
 
 for i in $(seq -w 1 9); do
