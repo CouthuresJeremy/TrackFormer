@@ -620,6 +620,14 @@ class TrackMLDataset(IterBase):
             pd.read_csv(particles) if particles.stat().st_size > 0 else pd.DataFrame()
         )
         truth_df = pd.read_csv(truth) if truth.stat().st_size > 0 else pd.DataFrame()
+        if not "event_id" in hits_df.columns:
+            hits_df["event_id"] = event_prefix
+        if not "event_id" in cells_df.columns:
+            cells_df["event_id"] = event_prefix
+        if not "event_id" in particles_df.columns:
+            particles_df["event_id"] = event_prefix
+        if not "event_id" in truth_df.columns:
+            truth_df["event_id"] = event_prefix
 
         return (
             hits_df,
