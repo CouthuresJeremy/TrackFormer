@@ -213,7 +213,7 @@ def plot_err_vs_n_hits(
     low_pt=False,
     show=True,
     save=True,
-    publication=False,
+    publication=True,
 ):
     """Plot error vs number of hits."""
     for var_index, var in enumerate(target_labels):
@@ -295,101 +295,16 @@ def plot_pi_true_vs_pred(
     title_suffix,
     output_dir,
     variable_filenames,
-    # variable_labels,
-    low_pt=False,
-    show=True,
-    save=True,
-    publication=False,
-):
-    """Plot true values vs predicted values."""
-    for var_index, var in enumerate(target_labels):
-        # Get the true values for the current variable.
-        pi_true_values, model_predictions, _ = prepare_data(
-            p_true_list, models, config, var_index, var, low_pt
-        )
-
-        title = f"${var}^{{true}}$ vs ${var}^{{pred}}$"
-        if low_pt:
-            title += " ($p_T$ < 10 GeV)"
-        title += title_suffix
-
-        true_label = f"${var}^{{true}}$"
-        pred_label = f"${var}^{{pred}}$"
-        xlabel = true_label + (" [GeV]" if var.startswith("p") else "")
-        ylabel = pred_label + (" [GeV]" if var.startswith("p") else "")
-        filename = f"{variable_filenames[var]}_true_vs_{variable_filenames[var]}_pred_square.png"
-        if low_pt:
-            filename = filename.replace(".", "_low_pt.")
-        filename = output_dir / filename
-
-        # Plot pt_true and pt_pred
-        plt.figure(figsize=(6 * len(models), 6))
-        plt.suptitle(title, fontsize=16)
-
-        min_pi_true = min(pi_true_values)
-        max_pi_true = max(pi_true_values)
-
-        # Loop over each model.
-        for model_index, (model_name, model_info) in enumerate(models.items(), start=1):
-            pi_pred_values = model_predictions[model_name]
-
-            plt.subplot(1, len(models), model_index)
-            plt.plot(
-                pi_true_values,
-                pi_pred_values,
-                alpha=0.7,
-                label=f"{model_info['label']} Model",
-                color=f"{model_info['color']}",
-                marker="o",
-                linestyle="None",
-            )
-
-            # Add x = y line
-            plt.plot(
-                [min_pi_true, max_pi_true],
-                [min_pi_true, max_pi_true],
-                color="black",
-                linestyle="--",
-                label=f"{true_label} = {pred_label}",
-            )
-
-            plt.xlabel(xlabel, fontsize=12)
-            plt.ylabel(ylabel, fontsize=12)
-            plt.grid(True, linestyle="--", alpha=0.7)
-            plt.legend()
-            if var == "p_T" and config["output_variables"][var_index] == "qopT":
-                plt.ylim(0, 10)
-
-        sync_plot_limits()
-
-        if save:
-            plt.savefig(filename, format="png", bbox_inches="tight")
-        if publication:
-            # Save the figure in publication format
-            publication_save(filename)
-        if show:
-            plt.show()
-        plt.close()
-
-
-def plot_binned_confusion_matrix(
-    target_labels,
-    p_true_list,
-    models,
-    config,
-    title_suffix,
-    output_dir,
-    variable_filenames,
     bins=50,
     log_density=True,
     low_pt=False,
     show=True,
     save=True,
-    publication=False,
+    publication=True,
 ):
     """
     For each variable and each model, make a binned 2D histogram of true vs predicted,
-    colored by density.
+    colored by density (a binned confusion matrix).
 
     Parameters
     ----------
