@@ -628,11 +628,35 @@ class TrackMLDataset(IterBase):
             truth_df,
         )
 
-    def _preprocessor(self, eventfiles):
+    def _preprocessor(self, event_files):
+        """Preprocesses data for the specified event.
+
+        Args:
+            event_files (tuple): Tuple containing the loaded event data files.
+        """
+        # Get kwargs input_variables if available
+        default_inputs = ["x", "y", "z"]
+        input_variables = getattr(self, "input_variables", default_inputs)
+
+        # Get kwargs output_variables if available
+        output_variables = getattr(self, "output_variables", ["pT", "pz"])
+
+        groups = self._preprocess_groups(event_files)
+        for group in groups:
+            inputs = group[input_variables].values
+            target = group[output_variables].values[0]
+
+            zxy = torch.tensor(inputs, dtype=torch.float32)
+            target_tensor = torch.tensor(target, dtype=torch.float32)
+
+            mask = torch.ones(zxy.shape[0], dtype=torch.bool)
+            yield zxy, mask, target_tensor
+
+    def _preprocess_groups(self, event_files):
         # Get kwargs output_variables if available
         self.output_variables = getattr(self, "output_variables", ["pT", "pz"])
 
-        hits, _, particles, truth = eventfiles
+        hits, _, particles, truth = event_files
         # Preprocess the particles dataframe
         particles = self._preprocess_particles(particles)
 
@@ -743,14 +767,7 @@ class TrackMLDataset(IterBase):
             if z_symmetry:
                 group = apply_z_symmetry(group)
 
-            inputs = group[input_variables].values
-            target = group[self.output_variables].values[0]
-
-            zxy = torch.tensor(inputs, dtype=torch.float32)
-            target_tensor = torch.tensor(target, dtype=torch.float32)
-
-            mask = torch.ones(zxy.shape[0], dtype=torch.bool)
-            yield zxy, mask, target_tensor
+            yield group
 
     def _preprocess_particles(self, particles):
         # Preprocess the particles dataframe
