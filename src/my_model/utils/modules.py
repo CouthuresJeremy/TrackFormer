@@ -16,7 +16,7 @@ def scaled_dot_product(q, k, v, mask=None):
 
     Args:
         q, k, v (torch.Tensor)  : Query , Key , value  tensors  (B, num_heads, seq_len, head_dim).
-        mask : batch firts mask
+        mask : batch first mask
     """
 
     L, S = q.size(-2), k.size(-2)
