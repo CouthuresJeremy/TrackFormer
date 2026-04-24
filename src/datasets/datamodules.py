@@ -198,14 +198,24 @@ class RootIterBase(IterBase):
 
     def __init__(self, dataset_dir, folder="train", dataset=None, **kwargs):
         self.path = Path(dataset_dir) / folder
+            
         # Find all ROOT files in the subdirectories
+        print(f"Looking for root files in {self.path}")
         self.root_files = sorted(list(self.path.glob("**/*.root")))
+
         # Remove files starting with "performance"
         self.root_files = [
             f for f in self.root_files if not f.name.startswith("performance")
         ]
+        
+        if not self.root_files:
+            raise FileNotFoundError(
+                f"Uh-oh! Looks like there are no ROOT files in {self.path} ..."
+            )
+        
         super().__init__(dataset_dir, folder, dataset, **kwargs)
         self.available_events = self._event_range()
+        
         if hasattr(self, "n_events_split"):
             self.available_events = sorted(
                 list(
@@ -252,6 +262,7 @@ class RootIterBase(IterBase):
                         len(f[keys][event_number_key].array().tolist()),
                     )
                 self.n_events_split = len(f[keys][event_number_key].array().tolist())
+                print(f"Found {self.n_events_split} events in {root_file}")
                 event_numbers.extend(f[keys][event_number_key].array().tolist())
         return sorted(list(set(event_numbers)))
 
@@ -1410,56 +1421,99 @@ def extract_barcode(
 class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
 
     def _load_event(self, event_prefix, n_events_split=100):
-        if getattr(self, "verbose", False):
+        if getattr(self, "verbose", True):
             print(
                 f"Loading event {event_prefix} and split {event_prefix // n_events_split * n_events_split}"
             )
+
+        # Use truth hit position if available, otherwise use reconstructed hit position ("measurements")
+        truth_hit_position = getattr(self, "truth_hit_position", False)
+
+        # Use true tracks, otherwise use the reco tracks (trackstates_ambi.root) 
+        truth_tracks = getattr(self, "truth_tracks", True)
+
+        if truth_hit_position:
+            print("Using truth hit position (tx, ty, tz)")
+        else:
+            print("Using reconstructed hit position (rec_gx, rec_gy, rec_gz)")
+
+        if truth_tracks:
+            print("Using truth tracks as target (as if the track finding was perfect)")
+        else:            
+            print("Using reconstructed tracks (from trackstates_ambi file)")
+
         self.event = event_prefix
+        # Alexis: particles_hits_helix is most probably a custom name from jeremy, not prapagated to ACTS main
+        # in recetn ACTS version the pregigee true parameters are saved in "particles_simulation" file 
+        # (if the option writeHelixParematers is enabled)
         particle_file = getattr(self, "particle_file", "particles_hits_helix")
         hits_file = getattr(self, "hits_file", "hits")
         measurements_file = getattr(self, "measurements_file", "measurements")
         track_hits_file = getattr(self, "track_hits_file", "trackstates_ambi")
         track_params_file = getattr(self, "track_params_file", "tracksummary_ambi")
-        # particles = self.path / f"{event_prefix}-particles_hits.csv"
+        
+        # Find particle truth file
         particles = self.path.glob(
             f"*_split_start_{event_prefix // n_events_split * n_events_split}_n_{n_events_split}/{particle_file}.root"
         )
-        hits = self.path.glob(
-            f"*_split_start_{event_prefix // n_events_split * n_events_split}_n_{n_events_split}/{hits_file}.root"
-        )
-        measurements = self.path.glob(
-            f"*_split_start_{event_prefix // n_events_split * n_events_split}_n_{n_events_split}/{measurements_file}.root"
-        )
-        track_hits = self.path.glob(
-            f"*_split_start_{event_prefix // n_events_split * n_events_split}_n_{n_events_split}/{track_hits_file}.root"
-        )
-        track_params = self.path.glob(
-            f"*_split_start_{event_prefix // n_events_split * n_events_split}_n_{n_events_split}/{track_params_file}.root"
-        )
+
+        # Find the "hits" file : hits.root if truth_hit_position is True, measurements.root otherwise
+        if truth_hit_position:
+            hits = self.path.glob(
+                f"*_split_start_{event_prefix // n_events_split * n_events_split}_n_{n_events_split}/{hits_file}.root"
+            )
+            measurements = []  # We will get the hit true position from the hits.root file
+        else:
+            hits = []  # We will get the hit position from the measurements file
+            measurements = self.path.glob(
+                f"*_split_start_{event_prefix // n_events_split * n_events_split}_n_{n_events_split}/{measurements_file}.root"
+            )
+
+        if not truth_tracks:
+            # Use the reco tracks from trackstates_ambi.root and tracksummary_ambi.root files
+            track_hits = self.path.glob(
+                f"*_split_start_{event_prefix // n_events_split * n_events_split}_n_{n_events_split}/{track_hits_file}.root"
+            )
+            track_params = self.path.glob(
+                f"*_split_start_{event_prefix // n_events_split * n_events_split}_n_{n_events_split}/{track_params_file}.root"
+            )
+        else:
+            # Use the true tracks, do not need reco tracks info
+            track_hits = []  
+            track_params = []
+
         # Ensure we have exactly one file for particles and hits
         particles = list(particles)
         hits = list(hits)
         measurements = list(measurements)
         track_hits = list(track_hits)
         track_params = list(track_params)
+
         assert (
             len(particles) == 1
         ), f"Expected exactly one particles file, got {len(particles)}"
-        assert len(hits) == 1, f"Expected exactly one hits file, got {len(hits)}"
-        assert (
-            len(measurements) == 1
-        ), f"Expected exactly one measurements file, got {len(measurements)}"
-        assert (
-            len(track_hits) == 1
-        ), f"Expected exactly one track hits file, got {len(track_hits)}"
-        assert (
-            len(track_params) == 1
-        ), f"Expected exactly one track params file, got {len(track_params)}"
+
         particles = particles[0]
-        hits = hits[0]
-        measurements = measurements[0]
-        track_hits = track_hits[0]
-        track_params = track_params[0]
+
+        if truth_hit_position:
+            assert len(hits) == 1, f"Expected exactly one hits file, got {len(hits)}"
+            hits = hits[0]
+        else:
+            assert (
+                len(measurements) == 1
+            ), f"Expected exactly one measurements file, got {len(measurements)}"
+            measurements = measurements[0]
+
+        if not truth_tracks:
+            assert (
+                len(track_hits) == 1
+            ), f"Expected exactly one track hits file, got {len(track_hits)}"
+            assert (
+                len(track_params) == 1
+            ), f"Expected exactly one track params file, got {len(track_params)}"
+            track_hits = track_hits[0]
+            track_params = track_params[0]
+        
         import uproot
 
         # Load particles
@@ -1486,13 +1540,10 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
             )
 
         # Load hits
-        truth_tracks = getattr(self, "truth_tracks", True)
         if truth_tracks:
             tracks = pd.DataFrame()
 
-            # Get kwargs truth_position if available
-            truth_position = getattr(self, "truth_position", True)
-            if truth_position:
+            if truth_hit_position:
                 with uproot.open(hits) as f:
                     hits = convert_tree_to_dataframe(f, keys=list(f.keys())[0])
 
@@ -1506,7 +1557,11 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
                 with uproot.open(measurements) as f:
                     branches_to_load = [
                         "event_nr",
-                        "particles",
+                        "particles_vertex_primary",
+                        "particles_vertex_secondary",
+                        "particles_particle",
+                        "particles_generation",
+                        "particles_sub_particle",
                         "rec_gx",
                         "rec_gy",
                         "rec_gz",
@@ -1539,12 +1594,6 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
                     inplace=True,
                 )
 
-                hits = extract_barcode(
-                    hits,
-                    idx_cols=["event_id"] + ["event_idx", "sublist_idx"],
-                    barcode_col="barcodes",
-                    barcode_index_col="elem_idx",
-                )
 
         else:
 
@@ -1729,21 +1778,21 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
         if all(
             col in hits.columns
             for col in [
-                "vertex_primary",
-                "vertex_secondary",
-                "particle",
-                "generation",
-                "sub_particle",
+                "particles_vertex_primary",
+                "particles_vertex_secondary",
+                "particles_particle",
+                "particles_generation",
+                "particles_sub_particle",
             ]
         ):
             # Combine vertex_primary, vertex_secondary, particle, generation and sub_particle into a single string
             hits["particle_id"] = hits[
                 [
-                    "vertex_primary",
-                    "vertex_secondary",
-                    "particle",
-                    "generation",
-                    "sub_particle",
+                    "particles_vertex_primary",
+                    "particles_vertex_secondary",
+                    "particles_particle",
+                    "particles_generation",
+                    "particles_sub_particle",
                 ]
             ].apply(lambda row: "_".join(row.values.astype(str)), axis=1)
             particles["particle_id"] = particles[
@@ -1831,7 +1880,7 @@ class DatasetWrapper(Dataset):
         # Check if dataset is valid
         if self.dataset_type not in ("tml", "acts", "acts_root"):
             raise ValueError(
-                f"Invalid dataset type '{dataset}'. Expected 'tml' or 'acts'."
+                f"Invalid dataset type '{dataset}'. Expected 'tml', 'acts' or 'acts_root'."
             )
 
         # Set the dataset class
