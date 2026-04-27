@@ -201,7 +201,7 @@ class RootIterBase(IterBase):
             
         # Find all ROOT files in the subdirectories
         print(f"Looking for root files in {self.path}")
-        self.root_files = sorted(list(self.path.glob("**/*.root")))
+        self.root_files = sorted(list(self.path.glob("*/*.root")))
 
         # Remove files starting with "performance"
         self.root_files = [
@@ -1421,7 +1421,9 @@ def extract_barcode(
 class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
 
     def _load_event(self, event_prefix, n_events_split=100):
-        if getattr(self, "verbose", True):
+
+        verbose = getattr(self, "verbose", False)
+        if verbose:
             print(
                 f"Loading event {event_prefix} and split {event_prefix // n_events_split * n_events_split}"
             )
@@ -1432,15 +1434,16 @@ class ActsRootDataset(ActsDatasetProcessing, RootIterBase):
         # Use true tracks, otherwise use the reco tracks (trackstates_ambi.root) 
         truth_tracks = getattr(self, "truth_tracks", True)
 
-        if truth_hit_position:
-            print("Using truth hit position (tx, ty, tz)")
-        else:
-            print("Using reconstructed hit position (rec_gx, rec_gy, rec_gz)")
+        if verbose:
+            if truth_hit_position:
+                print("Using truth hit position (tx, ty, tz)")
+            else:
+                print("Using reconstructed hit position (rec_gx, rec_gy, rec_gz)")
 
-        if truth_tracks:
-            print("Using truth tracks as target (as if the track finding was perfect)")
-        else:            
-            print("Using reconstructed tracks (from trackstates_ambi file)")
+            if truth_tracks:
+                print("Using truth tracks as target (as if the track finding was perfect)")
+            else:            
+                print("Using reconstructed tracks (from trackstates_ambi file)")
 
         self.event = event_prefix
         # Alexis: particles_hits_helix is most probably a custom name from jeremy, not prapagated to ACTS main
@@ -2260,7 +2263,7 @@ class DataModule(L.LightningDataModule):
             folder=folder,
             dataset=self.hparams.dataset_type,
             **self.dataset_class_kwargs,
-            verbose=folder in ("train", "val"),
+            verbose=self.dataset_class_kwargs.get("verbose", False),
             dynamic_load=self.hparams.dynamic_load,
             load=load,
         )
