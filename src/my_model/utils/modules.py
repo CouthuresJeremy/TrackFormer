@@ -352,6 +352,27 @@ class BaseModel(L.LightningModule):
             return [optimizer], [{"scheduler": lr_scheduler, "interval": "step"}]
         return optimizer
 
+    def _log_grouped_scalar(self, tag, mode, value):
+        if self.logger is None:
+            return
+
+        experiment = getattr(self.logger, "experiment", None)
+        if experiment is None:
+            return
+
+        scalar_value = value.detach().item() if torch.is_tensor(value) else value
+
+        if hasattr(experiment, "add_scalars"):
+            experiment.add_scalars(tag, {mode: scalar_value}, self.global_step)
+            return
+
+        if hasattr(experiment, "add_scalar"):
+            experiment.add_scalar(f"{tag}/{mode}", scalar_value, self.global_step)
+            return
+
+        if hasattr(experiment, "log"):
+            experiment.log({f"{tag}/{mode}": scalar_value}, step=self.global_step)
+
     def _calculate_loss(self, batch, mode="train"):
 
         inputs, mask, label = batch
@@ -407,13 +428,11 @@ class BaseModel(L.LightningModule):
         if self.logger and (
             self.global_step % log_every_n_steps == 0 or mode != "train"
         ):
-            # Log loss to TensorBoard
-            self.logger.experiment.add_scalars("loss", {mode: loss}, self.global_step)
+            # Log total loss
+            self._log_grouped_scalar("loss", mode, loss)
             # Add individual losses
             for i, l in enumerate(losses):
-                self.logger.experiment.add_scalars(
-                    f"loss_param_{i}", {mode: l}, self.global_step
-                )
+                self._log_grouped_scalar(f"loss_param_{i}", mode, l)
 
         # Early return
         if self.metric is None:
@@ -430,10 +449,7 @@ class BaseModel(L.LightningModule):
         )
 
         if self.logger and self.global_step % log_every_n_steps == 0:
-            # Log metric to TensorBoard
-            self.logger.experiment.add_scalars(
-                f"{self.metric.mode}_metric", {mode: metric}, self.global_step
-            )
+            self._log_grouped_scalar(f"{self.metric.mode}_metric", mode, metric)
         return loss
 
     def training_step(self, batch, batch_idx):
