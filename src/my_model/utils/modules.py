@@ -325,6 +325,50 @@ class BaseModel(L.LightningModule):
             len(self.criterion) == self.hparams.num_classes
         ), "Number of criteria must be str or match the number of classes"
         self.metric = Metric(self.hparams.metric) if self.hparams.metric else None
+        self._loss_param_names = None
+
+    def _sanitize_metric_token(self, name):
+        token = str(name).strip()
+        if not token:
+            return ""
+        return token.replace(" ", "_").replace("/", "_")
+
+    def _resolve_loss_param_names(self):
+        names = (
+            getattr(self.hparams, "output_variables", None)
+            or getattr(self.hparams, "output_names", None)
+            or getattr(self.hparams, "target_names", None)
+        )
+
+        if names is None and getattr(self, "trainer", None) is not None:
+            dm = getattr(self.trainer, "datamodule", None)
+            if dm is not None:
+                names = getattr(dm, "output_variables", None)
+                if names is None and hasattr(dm, "hparams"):
+                    names = getattr(dm.hparams, "output_variables", None)
+                    if names is None:
+                        kwargs = getattr(dm.hparams, "kwargs", None)
+                        if isinstance(kwargs, dict):
+                            names = kwargs.get("output_variables", None)
+
+        if names is None:
+            return []
+
+        if isinstance(names, str):
+            names = [names]
+        elif not isinstance(names, (list, tuple)):
+            return []
+
+        return [self._sanitize_metric_token(name) for name in names]
+
+    def _get_loss_param_token(self, index):
+        if self._loss_param_names is None:
+            self._loss_param_names = self._resolve_loss_param_names()
+
+        if index < len(self._loss_param_names) and self._loss_param_names[index]:
+            return self._loss_param_names[index]
+
+        return f"param_{index}"
 
     def setup(self, stage=None):
         if stage == "fit" and self.trainer.datamodule:
@@ -352,7 +396,7 @@ class BaseModel(L.LightningModule):
             return [optimizer], [{"scheduler": lr_scheduler, "interval": "step"}]
         return optimizer
 
-    def _log_grouped_scalar(self, tag, mode, value):
+    def _log_grouped_scalar(self, tag, mode, value, step=None):
         if self.logger is None:
             return
 
@@ -361,17 +405,18 @@ class BaseModel(L.LightningModule):
             return
 
         scalar_value = value.detach().item() if torch.is_tensor(value) else value
+        log_step = self.global_step if step is None else int(step)
 
         if hasattr(experiment, "add_scalars"):
-            experiment.add_scalars(tag, {mode: scalar_value}, self.global_step)
+            experiment.add_scalars(tag, {mode: scalar_value}, log_step)
             return
 
         if hasattr(experiment, "add_scalar"):
-            experiment.add_scalar(f"{tag}/{mode}", scalar_value, self.global_step)
+            experiment.add_scalar(f"{tag}/{mode}", scalar_value, log_step)
             return
 
         if hasattr(experiment, "log"):
-            experiment.log({f"{tag}/{mode}": scalar_value}, step=self.global_step)
+            experiment.log({f"{tag}/{mode}": scalar_value}, step=log_step)
 
     def _calculate_loss(self, batch, mode="train"):
 
@@ -383,6 +428,7 @@ class BaseModel(L.LightningModule):
         for i, criterion in enumerate(self.criterion):
             preds_i = preds[:, i].squeeze()
             label_i = label[:, i].squeeze()
+            param_token = self._get_loss_param_token(i)
             # Optional normalization of the loss
             if (
                 hasattr(self.hparams, "norm_loss")
@@ -398,7 +444,7 @@ class BaseModel(L.LightningModule):
             loss = criterion(preds_i, label_i)
             losses.append(loss)
             self.log(
-                f"{mode}_loss_param_{i}",
+                f"{mode}_loss_{param_token}",
                 loss,
                 prog_bar=True,
                 logger=False,
@@ -430,9 +476,18 @@ class BaseModel(L.LightningModule):
         ):
             # Log total loss
             self._log_grouped_scalar("loss", mode, loss)
+            self._log_grouped_scalar(
+                "loss_by_epoch", mode, loss, step=self.current_epoch
+            )
             # Add individual losses
             for i, l in enumerate(losses):
-                self._log_grouped_scalar(f"loss_param_{i}", mode, l)
+                param_tag = f"loss_{self._get_loss_param_token(i)}"
+                self._log_grouped_scalar(
+                    param_tag, mode, l
+                )
+                self._log_grouped_scalar(
+                    f"{param_tag}_by_epoch", mode, l, step=self.current_epoch
+                )
 
         # Early return
         if self.metric is None:
@@ -448,8 +503,16 @@ class BaseModel(L.LightningModule):
             batch_size=inputs.shape[0],
         )
 
-        if self.logger and self.global_step % log_every_n_steps == 0:
+        if self.logger and (
+            self.global_step % log_every_n_steps == 0 or mode != "train"
+        ):
             self._log_grouped_scalar(f"{self.metric.mode}_metric", mode, metric)
+            self._log_grouped_scalar(
+                f"{self.metric.mode}_metric_by_epoch",
+                mode,
+                metric,
+                step=self.current_epoch,
+            )
         return loss
 
     def training_step(self, batch, batch_idx):
