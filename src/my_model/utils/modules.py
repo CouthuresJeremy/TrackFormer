@@ -476,17 +476,11 @@ class BaseModel(L.LightningModule):
         ):
             # Log total loss
             self._log_grouped_scalar("loss", mode, loss)
-            self._log_grouped_scalar(
-                "loss_by_epoch", mode, loss, step=self.current_epoch
-            )
             # Add individual losses
             for i, l in enumerate(losses):
                 param_tag = f"loss_{self._get_loss_param_token(i)}"
                 self._log_grouped_scalar(
                     param_tag, mode, l
-                )
-                self._log_grouped_scalar(
-                    f"{param_tag}_by_epoch", mode, l, step=self.current_epoch
                 )
 
         # Early return
@@ -507,12 +501,6 @@ class BaseModel(L.LightningModule):
             self.global_step % log_every_n_steps == 0 or mode != "train"
         ):
             self._log_grouped_scalar(f"{self.metric.mode}_metric", mode, metric)
-            self._log_grouped_scalar(
-                f"{self.metric.mode}_metric_by_epoch",
-                mode,
-                metric,
-                step=self.current_epoch,
-            )
         return loss
 
     def training_step(self, batch, batch_idx):
