@@ -1,0 +1,29 @@
+# lightning.pytorch==2.4.0
+seed_everything: 0
+## Dataset
+data:
+  class_path: src.datasets.datamodules.DataModule
+  init_args:
+    dataset_type: tml
+    dataset_dir: Data/TrackML/training_part01
+    batch_size: 1024
+    use_wrapper: True
+    persistance: True
+    kwargs:
+      dataset_suffix: POC
+      wrapper_workers: 0
+      min_hits: 3
+      min_pt: 0.5
+      max_pt: 10
+      keep_secondaries: False
+      max_abs_eta: 1
+      sort_by_radius: True
+      cut_scattered: True
+      truth_position: True
+      input_variables:
+        - tr
+        - tphi
+        - tz
+      output_variables:
+        - pT
+        - pz

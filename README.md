@@ -67,6 +67,14 @@ bash run_TrackML_example.sh
 
 Step 6: To evaluate the models, update model paths in the `dataanalysis.ipynb` cells and run the notebook.
 
+## Other datasets
+
+You can use the following datasets to train the model:
+
+- [TrackML Particle Tracking Challenge](https://www.kaggle.com/c/trackml-particle-identification/data)
+- [TrackML Troughput Phase](https://zenodo.org/records/4730157)
+
+
 ## Important links
 
 - [slides](https://docs.google.com/presentation/d/1YvFFSKoVI4W0tpCQEvG8J3SybidqZtn08r3DU9UGw_E/edit?usp=sharing)
