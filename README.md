@@ -1,4 +1,4 @@
-# TrackFormer: Particle Trackfitting with Transformer 
+# TrackFormer: Particle Trackfitting with Transformer
 
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc/4.0/)
 [![Python](https://img.shields.io/badge/Python-3.7%2B-green.svg)](https://www.python.org/)
@@ -13,19 +13,21 @@ TrackFormer is a unique solution to particle trajectory reconstruction that uses
 
 - **Transformer-based Architecture**: For fast efficient and accurate particle track fitting.
 - **Built with Lightning Integration**:
-- **Modular Design**: 
+- **Modular Design**:
 - **Logging and CLI integration**:
 
 ## Getting Started
 
 1. **Clone the repository**:
 2. download datasets to specific directory
-3. cd to appropriate script to train, test split dataset: 
+3. cd to appropriate script to train, test split dataset:
  `./split_dataset.sh /path/to/downloaded/dataset 80 10 10`
 4. train the model using the following command:
  `python main.py fit --config configs/tformer.yaml`
 5. train the model with wandb logging:
  `python main.py fit --config configs/tformer.yaml --config configs/trainer.yaml`
+6. precompute cached datasets without training:
+ `python scripts/preprocess_data.py --config configs/Acts/dataset.yaml`
 
 ## Reproducing the results
 

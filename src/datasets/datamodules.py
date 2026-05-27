@@ -1904,6 +1904,10 @@ class DatasetWrapper(Dataset):
         # Preprocess the data if not already done
         if not self._is_preprocessed():
             self._preprocess_data()
+        else:
+            console.print(
+                f"Preprocessed data already exists for {self.folder} folder.", style="cyan"
+            )
 
         # If load is set to False, skip loading the data
         if not self.load:
@@ -2234,6 +2238,29 @@ class DataModule(L.LightningDataModule):
 
         if stage in ("test", None):
             self.test_dataset = self._create_dataset("test")
+
+    def preprocess_data(self, folders=("train", "val", "test")):
+        """Run dataset preprocessing without creating dataloaders or training.
+
+        This instantiates the configured wrapper datasets with ``load=False`` so
+        that the preprocessing step writes the cached files and exits before any
+        data loading for training starts.
+
+        Args:
+            folders (tuple[str, ...]): Dataset folders to preprocess.
+        """
+        if not self.hparams.use_wrapper:
+            raise ValueError(
+                "preprocess_data() requires use_wrapper=True so the preprocessed "
+                "files can be written by DatasetWrapper."
+            )
+
+        console.rule(f"Preprocessing {self.hparams.dataset_type.capitalize()} Dataset")
+        for folder in folders:
+            console.print(f"Preprocessing folder '{folder}'", style="cyan")
+            self._create_dataset(folder, load=False)
+
+        console.print(f"Finished preprocessing {self.hparams.dataset_type.capitalize()} Dataset", style="cyan")
 
     def train_dataloader(self):
         return self._create_dataloader(self.train_dataset)
