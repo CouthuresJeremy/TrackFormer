@@ -214,7 +214,6 @@ class RootIterBase(IterBase):
             )
         
         super().__init__(dataset_dir, folder, dataset, **kwargs)
-        self.available_events = self._event_range()
         
         if hasattr(self, "n_events_split"):
             self.available_events = sorted(
@@ -227,6 +226,7 @@ class RootIterBase(IterBase):
             )
         else:
             self.available_events = self._event_range()
+
 
     def _event_range(self):
         # Find the number of events in the ROOT files
@@ -264,7 +264,13 @@ class RootIterBase(IterBase):
                 self.n_events_split = len(f[keys][event_number_key].array().tolist())
                 print(f"Found {self.n_events_split} events in {root_file}")
                 event_numbers.extend(f[keys][event_number_key].array().tolist())
-        return sorted(list(set(event_numbers)))
+
+        unique_event_numbers = set(event_numbers)
+
+        if( len(unique_event_numbers) != len(event_numbers) ):
+            raise ValueError( "Duplicate event numbers found across ROOT files." )
+
+        return sorted(list(unique_event_numbers))
 
     def _preprocessor(self, event: str):
         """preprocessing logic."""
@@ -1852,7 +1858,7 @@ class DatasetWrapper(Dataset):
         dataset_dir,
         folder,
         dataset="tml",
-        split_size=1_000_000,
+        split_size=1_000_000, # number of tracks per chunk
         dynamic_load=False,
         **kwargs,
     ):
@@ -1874,8 +1880,10 @@ class DatasetWrapper(Dataset):
         self.data_file = (
             self.dataset_dir / f"preprocessed_{self.folder}{self.data_file_suffix}.pt"
         )
-        self.split_size = split_size  # Number of samples per split
-        self.wrapper_workers = kwargs.pop("wrapper_workers", int(os.cpu_count()))
+        self.split_size = split_size  # Number of samples per chunk
+        self.wrapper_workers = kwargs.get("wrapper_workers", int(os.cpu_count()))
+        if self.wrapper_workers and self.wrapper_workers > 0:
+            torch.multiprocessing.set_sharing_strategy("file_system")
         self.datalist = None
         self.dynamic_load = dynamic_load
         self.current_loaded_chunk = -1
@@ -1904,6 +1912,10 @@ class DatasetWrapper(Dataset):
         # Preprocess the data if not already done
         if not self._is_preprocessed():
             self._preprocess_data()
+        else:
+            console.print(
+                f"Preprocessed data already exists for {self.folder} folder.", style="cyan"
+            )
 
         # If load is set to False, skip loading the data
         if not self.load:
@@ -2235,6 +2247,29 @@ class DataModule(L.LightningDataModule):
         if stage in ("test", None):
             self.test_dataset = self._create_dataset("test")
 
+    def preprocess_data(self, folders=("train", "val", "test")):
+        """Run dataset preprocessing without creating dataloaders or training.
+
+        This instantiates the configured wrapper datasets with ``load=False`` so
+        that the preprocessing step writes the cached files and exits before any
+        data loading for training starts.
+
+        Args:
+            folders (tuple[str, ...]): Dataset folders to preprocess.
+        """
+        if not self.hparams.use_wrapper:
+            raise ValueError(
+                "preprocess_data() requires use_wrapper=True so the preprocessed "
+                "files can be written by DatasetWrapper."
+            )
+
+        console.rule(f"Preprocessing {self.hparams.dataset_type.capitalize()} Dataset")
+        for folder in folders:
+            console.print(f"Preprocessing folder '{folder}'", style="cyan")
+            self._create_dataset(folder, load=False)
+
+        console.print(f"Finished preprocessing {self.hparams.dataset_type.capitalize()} Dataset", style="cyan")
+
     def train_dataloader(self):
         return self._create_dataloader(self.train_dataset)
 
@@ -2263,7 +2298,6 @@ class DataModule(L.LightningDataModule):
             folder=folder,
             dataset=self.hparams.dataset_type,
             **self.dataset_class_kwargs,
-            verbose=self.dataset_class_kwargs.get("verbose", False),
             dynamic_load=self.hparams.dynamic_load,
             load=load,
         )
